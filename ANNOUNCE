@@ -1,1 +1,3 @@
-A very rough first version
+Window resize, jump mode and some keystroke commands
+
+Jump mode does avoid scrolling.  Also resizing the terminal now should work.

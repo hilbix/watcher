@@ -8,6 +8,9 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.2  2010-07-15 07:28:46  tino
+# See ANNOUNCE
+#
 # Revision 1.1  2010-07-15 03:57:11  tino
 # First version, it works
 #
@@ -15,6 +18,7 @@
 import curses, sys, os, fcntl, socket, stat
 
 BUFSIZ=4096
+MAX_HIST=10000
 
 def nonblocking(fd):
 	flags	= fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -75,7 +79,7 @@ class WatchFile():
 		if self.init:
 			self.init	= False
 			self.pos	= os.lseek(self.fd,0,os.SEEK_END)
-			self.pos	= os.lseek(self.fd,max(0,self.pos-1000),os.SEEK_SET)
+			self.pos	= os.lseek(self.fd,max(0,self.pos-MAX_HIST),os.SEEK_SET)
 
 	def open(self):
 		if self.fd>=0:	return True
@@ -97,7 +101,7 @@ class WatchFile():
 		return self.open()
 
 	def check(self):
-		if self.fd>=0:
+		if self.fd>=0 and self.sock==None:
 			try:
 				st	= os.stat(self.name)
 				if st.st_ino!=self.stat.st_ino:
@@ -115,11 +119,12 @@ class WatchFile():
 			data	= []
 			try:
 				for i in range(1,20):
-					data.append(self.sock.recv(4096))
+					data.append(self.sock.recv(BUFSIZ))
 			except socket.error,(e,s):
 				if e!=11:
 					raise
 			data=''.join(data)
+			if data=='': return None
 			self.pos	+= len(data)
 			return data
 
@@ -148,10 +153,7 @@ class FileOb:
 	def __init__(self,file):
 		self.file	= file
 		self.win	= None
-		self.nl		= False
-		self.x		= 0
-		self.y		= 0
-		self.warn	= curses.A_NORMAL
+		self.hist	= ""
 
 class Watcher():
 
@@ -159,6 +161,8 @@ class Watcher():
 	files	= []
 	open	= {}
 	windows	= 0
+	jump	= False
+	minlines= 7
 
 	def __init__(self):
 		self.count	= 0;
@@ -178,7 +182,8 @@ class Watcher():
 		p	= int(self.windows / self.tiles)
 		x	= n*(self.width+1)
 		y	= 2+p*(self.height+1)
-		win	= curses.newwin(self.height,self.width,y,x)
+
+		win	= self.scr.subwin(self.height,self.width,y,x)
 		if n+1<self.tiles:
 			self.scr.attron(curses.color_pair(8))
 			self.scr.vline(y-1,x+self.width,32,self.height+1)
@@ -192,8 +197,24 @@ class Watcher():
 		win.scrollok(1)
 		win.idcok(1)
 		win.idlok(1)
+
 		self.windows	+= 1
+
 		a.win	= win
+		a.nl	= False
+		a.x	= 0
+		a.y	= 0
+		a.warn	= curses.A_NORMAL
+
+		if len(a.hist):
+			self.update(a,a.hist)
+
+	def scroll(self,a):
+		if self.jump:
+			a.win.move(0,0)
+		else:
+			a.win.scroll()
+			a.win.move(a.win.getyx()[0],0)
 
 	def readFiles(self):
 		self.count	+= 1
@@ -203,49 +224,85 @@ class Watcher():
 		for a in self.files:
 			data	= a.file.read()
 			if data==None: continue
-			win	= a.win
-			win.chgat(a.y,a.x,a.warn)
-			for c in data:
-				c=ord(c)
-				if c==13:
-					win.move(win.getyx()[0],0)
-					continue
-				if c==10:
-					a.nl	= True
-					continue
-				if a.nl:
-					try:
-						win.move(win.getyx()[0]+1,0)
-					except:
-						win.scroll()
-						win.move(win.getyx()[0],0)
-					a.nl	= False
-					a.warn	= curses.A_NORMAL
-				if c==7:
-					a.warn	= curses.color_pair(9)
-					win.chgat(win.getyx()[0],0,curses.color_pair(9))
-					continue
-				try:
-					win.addch(c,a.warn)
-				except:
-					win.scroll()
-					win.move(win.getyx()[0],0)
-					win.addch(c,a.warn)
-			a.y,a.x=win.getyx()
-			if a.nl:
-				if a.warn!=curses.A_NORMAL:
-					win.chgat(a.y,a.x,a.warn|curses.A_UNDERLINE)
-				else:
-					win.chgat(a.y,a.x,curses.color_pair(8)|curses.A_UNDERLINE)
+			self.update(a,data)
+			if len(data)>=MAX_HIST:
+				a.hist	= data[-MAX_HIST:]
 			else:
-				win.chgat(a.y,a.x,1,curses.color_pair(8))
-			win.noutrefresh()
+				a.hist	= a.hist[max(-len(a.hist),len(data)-MAX_HIST):]+data
 
-	def layout(self):
-		h,w=self.scr.getmaxyx()
-		d=1
-		while h/len(self.files)*d<7:
-			d	+= 1
+	def update(self,a,data):
+		win	= a.win
+		win.chgat(a.y,0,a.warn)
+		win.move(a.y,a.x)
+		y=a.y
+		for c in data:
+			c=ord(c)
+			if c==13:
+				win.move(win.getyx()[0],0)
+				continue
+			if c==10:
+				a.nl	= True
+				continue
+			if a.nl:
+				try:
+					win.move(win.getyx()[0]+1,0)
+					win.clrtoeol()
+				except:
+					self.scroll(a)
+				a.nl	= False
+				a.warn	= curses.A_NORMAL
+			if c==7:
+				a.warn	= curses.color_pair(9)
+				win.chgat(win.getyx()[0],0,curses.color_pair(9))
+				continue
+			try:
+				win.addch(c,a.warn)
+			except:
+				self.scroll(a)
+				win.addch(c,a.warn)
+
+			a.y,a.x=win.getyx()
+			if a.y!=y:
+				win.clrtoeol()
+				y=a.y
+				
+		a.y,a.x=win.getyx()
+		if a.nl:
+			if a.warn!=curses.A_NORMAL:
+				win.chgat(a.y,a.x,a.warn|curses.A_UNDERLINE)
+			else:
+				win.chgat(a.y,a.x,curses.color_pair(8)|curses.A_UNDERLINE)
+		else:
+			if self.jump:
+				win.chgat(a.y,0,curses.A_REVERSE)
+			win.chgat(a.y,a.x,1,curses.color_pair(8))
+
+		win.noutrefresh()
+
+	def layout(self, minlines=None):
+
+		h,w	= self.scr.getmaxyx()
+		if minlines!=None:
+			if self.minlines==minlines: return
+			self.minlines	= minlines
+
+		minlines	= self.minlines
+		if minlines<1: minlines=1
+		if minlines>h-2: minlines=h-2
+
+		self.scr.clear()
+		self.scr.redrawwin()
+		self.scr.idcok(1)
+		self.scr.idlok(1)
+		self.scr.leaveok(0)
+
+		curses.init_pair(8,curses.COLOR_WHITE,curses.COLOR_BLUE)
+		curses.init_pair(9,curses.COLOR_WHITE,curses.COLOR_RED)
+		curses.init_pair(10,curses.COLOR_RED,curses.COLOR_BLUE)
+
+		d	= int((h-1)/(minlines+1))
+		d	= int((len(self.files)+d-1)/d)
+
 		w	= int((w-d+1)/d)
 		n	= int((len(self.files)+d-1)/d)
 		h	= int((h-1-n)/n)
@@ -254,31 +311,52 @@ class Watcher():
 		self.height	= h
 		self.tiles	= d
 
-	def run(self,scr):
-		self.scr	= scr
-		curses.halfdelay(5)
-		scr.clear()
-		scr.idcok(1)
-		scr.idlok(1)
-		scr.leaveok(0)
-		curses.init_pair(8,curses.COLOR_WHITE,curses.COLOR_BLUE)
-		curses.init_pair(9,curses.COLOR_WHITE,curses.COLOR_RED)
-		curses.init_pair(10,curses.COLOR_RED,curses.COLOR_BLUE)
-		self.layout()
+		self.windows	= 0
 		for a in self.files:
 			self.newWin(a)
+
+	def run(self,scr):
+		self.scr	= scr
+		curses.halfdelay(3)
+		self.layout()
 		self.checkFiles()
 
-		while 1:
+		loop	= True
+		while loop:
 			scr.move(0,0)
 			scr.refresh()
+
 			c	= scr.getch()
 			if c<0:
 				self.readFiles()
-			elif c==27:
-				break
-			else:
-				scr.addstr(0,0,"ESC to exit   (%d)  " % c)
+				continue
+
+			s="Quit Jump Scroll 1-9"
+
+			if c==curses.KEY_RESIZE:
+				self.layout()
+				s="Resized (%dx%d)" % (self.height, self.width)
+			if c==12:
+				self.layout()
+				s="Redraw (%dx%d)" % (self.height, self.width)
+
+			if c>=49 and c<58:
+				self.layout((c-49)*(c-49)+3)
+				s="%dx%d" % (self.height, self.width)
+
+			if c==113:
+				s="Quit"
+				loop=False
+			if c==106:	#j
+				self.jump	= True
+				s="Jump mode"
+			if c==115:	#s
+				self.jump	= False
+				s="Scroll mode"
+			scr.addstr(0,0,"  [%03d] %s" % (c,s))
+			scr.clrtoeol()
+
+		scr.refresh()
 
 	def main(self):
 		curses.wrapper(lambda scr:self.run(scr))
