@@ -1,0 +1,18 @@
+A Python2.6 script to watch files, pipes or Unix domain sockets
+# $Header$
+#
+# $Log$
+# Revision 1.1  2010-07-15 04:08:33  tino
+# First version
+#
+
+If you have a couple of files to watch in parallel and when
+`tail --follow=file -f files...' get's a bit confusing,
+just try ./watcher.py files... 
+
+It's not perfect, but it is able to read from files, pipes and
+Unix domain sockets.  If a BEL character (^G, ASCII 7) is received,
+the line is marked red.
+
+Not yet implemented is to allow keystrokes to be send to the
+unix domain sockets as well, like a poor man's terminal.
