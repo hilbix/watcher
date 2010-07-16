@@ -8,13 +8,16 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.4  2010-07-16 16:03:26  tino
+# keystroke commands, more layout, resize handling, etc.
+#
 # Revision 1.3  2010-07-16 00:13:35  tino
 # See ChangeLog
 #
 # Revision 1.2  2010-07-15 07:28:46  tino
 # See ANNOUNCE
 
-import curses, sys, os, fcntl, socket, stat
+import curses, sys, os, fcntl, socket, stat, time, warnings
 
 BUFSIZ=4096
 MAX_HIST=10000
@@ -185,21 +188,35 @@ class Watcher():
 				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(self.C_RED))
 
 	def newWin(self,a):
-		n	= self.windows % self.tiles
 		p	= int(self.windows / self.tiles)
-		x	= n*(self.width+1)
-		y	= 2+p*(self.height+1)
+		n	= self.windows % self.tiles
 
-		win	= self.scr.subwin(self.height,self.width,y,x)
+		y	= 2+p*(self.height+1)
+		x	= n*(self.width+1)
+
+		h,w	= self.scr.getmaxyx()
+		assert h>2 and w>2
+
+		h	-= y
+		w	-= x
+		if h>=self.height*2:
+			h	= self.height
+		if w>=self.width*2:
+			w	= self.width
+
+		assert h>0 and w>0 and y>=0 and x>=0
+		win	= self.scr.subwin(h,w,y,x)
+		self.defaults(win)
+
 		if n+1<self.tiles:
 			self.scr.attron(curses.color_pair(self.C_BORDER))
-			self.scr.vline(y-1,x+self.width,32,self.height+1)
+			self.scr.vline(y-1,x+w,32,h+1)
 			self.scr.attroff(curses.color_pair(self.C_BORDER))
 		a.tx	= x
 		a.ty	= y-1
-		a.w	= self.width
-		a.h	= self.height
-		self.scr.addstr(y-1,x,a.file.name[-self.width:]+" "*max(0,self.width-len(a.file.name)))
+		a.w	= w
+		a.h	= h
+		self.scr.addstr(y-1,x,a.file.name[-w:]+" "*max(0,w-len(a.file.name)))
 		self.scr.chgat(y-1,0,curses.color_pair(self.C_BORDER))
 		win.scrollok(1)
 		win.idcok(1)
@@ -305,24 +322,30 @@ class Watcher():
 
 	def setColor(self):
 		self.setSingleColor(self.C_BORDER, self.gridcolor)
-		self.setSingleColor(self.C_CURSOR, self.cursorcolor)
-		self.setSingleColor(self.C_WARN, 5+self.warncolor)
+		self.setSingleColor(self.C_CURSOR, self.cursorcolor+1)
+		self.setSingleColor(self.C_WARN,   self.warncolor+5)
 
 		curses.init_pair(self.C_RED,curses.COLOR_RED,curses.COLOR_BLUE)
 
-	def layout(self, minlines=None):
+	def defaults(self,win):
+		win.idcok(1)
+		win.idlok(1)
+		win.leaveok(0)
+		win.keypad(1)
 
-		self.scr.clear()
-		self.scr.redrawwin()
-		self.scr.idcok(1)
-		self.scr.idlok(1)
-		self.scr.leaveok(0)
-		self.setColor()
+	def layoutImp(self, minlines):
 
-		h,w	= self.scr.getmaxyx()
 		if minlines!=None:
 			if self.minlines==minlines: return
 			self.minlines	= minlines
+
+		self.scr.clear()
+		self.defaults(self.scr)
+		self.scr.redrawwin()
+		self.setColor()
+
+		h,w	= self.scr.getmaxyx()
+		assert h>2 and w>2
 
 		minlines	= self.minlines
 		if minlines<1: minlines=1
@@ -330,35 +353,109 @@ class Watcher():
 
 		d	= int((h-1)/(minlines+1))
 		d	= int((len(self.files)+d-1)/d)
-
-		w	= int((w-d+1)/d)
 		n	= int((len(self.files)+d-1)/d)
-		h	= int((h-1-n)/n)
 
-		self.width	= w
-		self.height	= h
 		self.tiles	= d
+		self.width	= int((w-d+1)/d)
+		self.height	= int((h-1-n)/n)
 
 		self.windows	= 0
 		for a in self.files:
 			self.newWin(a)
 
-		return " (%dx%d)" % (self.height, self.width)
+	def layout(self,minlines=None):
+		self.layoutImp(minlines)
+		return "(%dx%d)" % (self.height, self.width)
+
+	def charcode(self,c):
+		s=""
+		if c==27: s="ESC"
+		if c==32: s="SPC"
+		if c>32 and c<127: s="%c" % c
+		for k,v in curses.__dict__.iteritems():
+			if k.startswith("KEY_") and v==c:
+				s=k[4:]
+				break
+		if s=='[' or s==']':
+			return "%s(%d)" % (s,c);
+		return "%s[%d]" % (s,c);
 
 	def run(self,scr):
 		self.scr	= scr
+
+		curses.nonl()
 		curses.halfdelay(3)
+		try:
+			curses.curs_set(0)
+		except:
+			pass
+
 		self.layout()
 		self.checkFiles()
 
+		host	= socket.getfqdn()
+		try:
+			user	= os.getlogin()
+		except:
+			user	= os.environ['USERNAME']
+
+		c	= 0
+		cwd	= "CWD "+os.getcwd()
+		s	= None
+		ticks	= 0
+		haveMsg	= False
+		last	= None
 		loop	= True
+		c0	= None
+		c1	= None
 		while loop:
+			c2	= c1
+			c1	= c0
+			c0	= None
+			if s:
+				ticks	= 20
+
+			if ticks==0:
+				s	= cwd
+				ticks	= -1
+
+			now	= int(time.time())
+			if now!=last:
+				ticks	-= 1
+				t	= "(%s@%s) %s" % (user, host, time.strftime("%a %Y-%m-%d %H:%M:%S %Z"))
+				scr.addstr(0,max(2,scr.getmaxyx()[1]-len(t)),t)
+				if last:
+					if now<last:
+						s	= "Time went backwards"
+						ticks	= -1
+					elif now>last+10:
+						s	= "Time jump"
+						ticks	= -1
+				last	= now
+
+			if s:
+				scr.move(0,0)
+				if c0 or c1 or c2:
+					scr.addstr(c0 or c1 or c2)
+					scr.addstr(" ")
+				scr.addstr(s)
+				scr.clrtoeol()
+				s	= None
+
 			scr.move(0,0)
 			scr.refresh()
 
 			c	= scr.getch()
 			if c<0:
 				self.readFiles()
+				continue
+
+			c0=self.charcode(c)
+			if c1 or c2:
+				c0=(c1 or c2)+c0
+				c1=None
+				c2=None
+				s="typed too fast"
 				continue
 
 			s="Quit Color Jump Scroll 1-9"
@@ -404,10 +501,6 @@ class Watcher():
 			if c==115:	#s
 				self.jump	= False
 				s="Scroll mode"
-
-			scr.addstr(0,0,"  [%03d] %s" % (c,s))
-			scr.clrtoeol()
-
 		scr.refresh()
 
 	def main(self):

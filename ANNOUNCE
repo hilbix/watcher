@@ -1,4 +1,11 @@
-Window resize, and keystrokes for colors and jump mode.
+Window resize, keystrokes, improvments
 
-Jump mode does avoid scrolling.  Also resizing the terminal should
-work.  Colors can be changed (not permanently yet).
+Resizing the terminal should work now.
+
+Jump mode does avoid scrolling.
+
+Colors can be changed (not permanently yet).
+
+The keystrokes received are printed now completely.
+
+The status line (first line) now has a purpose, shows time etc.

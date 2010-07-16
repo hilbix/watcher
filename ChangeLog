@@ -2,4 +2,7 @@
 
 	* watcher.py (Watcher.setColor): Now can be used to change the colors
 	(Watcher.run): Keystrokes for color changing
-
+	(Watcher.run): status message
+	(Watcher.charcode): keystrokes are presented
+	(Watcher.run): clock etc.
+	(Watcher.layoutImp): improved layout (use complete screen)
