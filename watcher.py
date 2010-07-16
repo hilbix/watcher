@@ -8,12 +8,11 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.3  2010-07-16 00:13:35  tino
+# See ChangeLog
+#
 # Revision 1.2  2010-07-15 07:28:46  tino
 # See ANNOUNCE
-#
-# Revision 1.1  2010-07-15 03:57:11  tino
-# First version, it works
-#
 
 import curses, sys, os, fcntl, socket, stat
 
@@ -163,6 +162,14 @@ class Watcher():
 	windows	= 0
 	jump	= False
 	minlines= 7
+	gridcolor	= 0
+	cursorcolor	= 0
+	warncolor	= 0
+
+	C_BORDER	= 8
+	C_WARN		= 9
+	C_RED		= 10
+	C_CURSOR	= 11
 
 	def __init__(self):
 		self.count	= 0;
@@ -173,9 +180,9 @@ class Watcher():
 	def checkFiles(self):
 		for a in self.files:
 			if a.file.check():
-				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(8))
+				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(self.C_BORDER))
 			else:
-				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(10))
+				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(self.C_RED))
 
 	def newWin(self,a):
 		n	= self.windows % self.tiles
@@ -185,15 +192,15 @@ class Watcher():
 
 		win	= self.scr.subwin(self.height,self.width,y,x)
 		if n+1<self.tiles:
-			self.scr.attron(curses.color_pair(8))
+			self.scr.attron(curses.color_pair(self.C_BORDER))
 			self.scr.vline(y-1,x+self.width,32,self.height+1)
-			self.scr.attroff(curses.color_pair(8))
+			self.scr.attroff(curses.color_pair(self.C_BORDER))
 		a.tx	= x
 		a.ty	= y-1
 		a.w	= self.width
 		a.h	= self.height
 		self.scr.addstr(y-1,x,a.file.name[-self.width:]+" "*max(0,self.width-len(a.file.name)))
-		self.scr.chgat(y-1,0,curses.color_pair(8))
+		self.scr.chgat(y-1,0,curses.color_pair(self.C_BORDER))
 		win.scrollok(1)
 		win.idcok(1)
 		win.idlok(1)
@@ -252,8 +259,10 @@ class Watcher():
 				a.nl	= False
 				a.warn	= curses.A_NORMAL
 			if c==7:
-				a.warn	= curses.color_pair(9)
-				win.chgat(win.getyx()[0],0,curses.color_pair(9))
+				a.warn	= curses.color_pair(self.C_WARN)
+				y,x=win.getyx()
+				win.chgat(y,0,a.warn)
+				win.move(y,x)
 				continue
 			try:
 				win.addch(c,a.warn)
@@ -271,15 +280,44 @@ class Watcher():
 			if a.warn!=curses.A_NORMAL:
 				win.chgat(a.y,a.x,a.warn|curses.A_UNDERLINE)
 			else:
-				win.chgat(a.y,a.x,curses.color_pair(8)|curses.A_UNDERLINE)
+				win.chgat(a.y,a.x,curses.color_pair(self.C_CURSOR)|curses.A_UNDERLINE)
 		else:
 			if self.jump:
-				win.chgat(a.y,0,curses.A_REVERSE)
-			win.chgat(a.y,a.x,1,curses.color_pair(8))
+				win.chgat(a.y,0,a.warn|curses.A_REVERSE)
+			win.chgat(a.y,a.x,1,curses.color_pair(self.C_CURSOR))
 
 		win.noutrefresh()
 
+	def contrast(self,color):
+		if color==curses.COLOR_BLUE or color==curses.COLOR_RED:
+			return curses.COLOR_WHITE
+		if color==curses.COLOR_BLACK:
+			return curses.COLOR_CYAN
+		return curses.COLOR_BLACK
+
+	def color(self,value):
+		cols	= [curses.COLOR_BLUE,curses.COLOR_GREEN,curses.COLOR_YELLOW,curses.COLOR_CYAN,curses.COLOR_MAGENTA,curses.COLOR_RED,curses.COLOR_WHITE,curses.COLOR_BLACK]
+		return cols[value%len(cols)]
+
+	def setSingleColor(self,color,value):
+		bg	= self.color(value)
+		curses.init_pair(color,self.contrast(bg),bg)
+
+	def setColor(self):
+		self.setSingleColor(self.C_BORDER, self.gridcolor)
+		self.setSingleColor(self.C_CURSOR, self.cursorcolor)
+		self.setSingleColor(self.C_WARN, 5+self.warncolor)
+
+		curses.init_pair(self.C_RED,curses.COLOR_RED,curses.COLOR_BLUE)
+
 	def layout(self, minlines=None):
+
+		self.scr.clear()
+		self.scr.redrawwin()
+		self.scr.idcok(1)
+		self.scr.idlok(1)
+		self.scr.leaveok(0)
+		self.setColor()
 
 		h,w	= self.scr.getmaxyx()
 		if minlines!=None:
@@ -289,16 +327,6 @@ class Watcher():
 		minlines	= self.minlines
 		if minlines<1: minlines=1
 		if minlines>h-2: minlines=h-2
-
-		self.scr.clear()
-		self.scr.redrawwin()
-		self.scr.idcok(1)
-		self.scr.idlok(1)
-		self.scr.leaveok(0)
-
-		curses.init_pair(8,curses.COLOR_WHITE,curses.COLOR_BLUE)
-		curses.init_pair(9,curses.COLOR_WHITE,curses.COLOR_RED)
-		curses.init_pair(10,curses.COLOR_RED,curses.COLOR_BLUE)
 
 		d	= int((h-1)/(minlines+1))
 		d	= int((len(self.files)+d-1)/d)
@@ -314,6 +342,8 @@ class Watcher():
 		self.windows	= 0
 		for a in self.files:
 			self.newWin(a)
+
+		return " (%dx%d)" % (self.height, self.width)
 
 	def run(self,scr):
 		self.scr	= scr
@@ -331,18 +361,39 @@ class Watcher():
 				self.readFiles()
 				continue
 
-			s="Quit Jump Scroll 1-9"
+			s="Quit Color Jump Scroll 1-9"
 
 			if c==curses.KEY_RESIZE:
-				self.layout()
-				s="Resized (%dx%d)" % (self.height, self.width)
+				s="Resized "+self.layout()
 			if c==12:
-				self.layout()
-				s="Redraw (%dx%d)" % (self.height, self.width)
+				s="Redraw "+self.layout()
+			if c==99:
+				self.cursorcolor+=1
+				self.setColor()
+				s="Cursor color"
+			if c==67:
+				self.cursorcolor-=1
+				self.setColor()
+				s="Cursor color"
+			if c==103:
+				self.gridcolor+=1
+				self.setColor()
+				s="Grid color"
+			if c==71:
+				self.gridcolor-=1
+				self.setColor()
+				s="Grid color"
+			if c==119:
+				self.warncolor-=1
+				self.setColor()
+				s="Warn color"
+			if c==87:
+				self.warncolor+=1
+				self.setColor()
+				s="Warn color"
 
 			if c>=49 and c<58:
-				self.layout((c-49)*(c-49)+3)
-				s="%dx%d" % (self.height, self.width)
+				s="Layout "+self.layout((c-49)*(c-49)+3)
 
 			if c==113:
 				s="Quit"
@@ -353,6 +404,7 @@ class Watcher():
 			if c==115:	#s
 				self.jump	= False
 				s="Scroll mode"
+
 			scr.addstr(0,0,"  [%03d] %s" % (c,s))
 			scr.clrtoeol()
 

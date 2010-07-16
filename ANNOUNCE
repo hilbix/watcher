@@ -1,3 +1,4 @@
-Window resize, jump mode and some keystroke commands
+Window resize, and keystrokes for colors and jump mode.
 
-Jump mode does avoid scrolling.  Also resizing the terminal now should work.
+Jump mode does avoid scrolling.  Also resizing the terminal should
+work.  Colors can be changed (not permanently yet).
