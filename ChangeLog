@@ -1,0 +1,5 @@
+2010-07-16  Valentin Hilbig  <tino@zoo.03.softkill.net>
+
+	* watcher.py (Watcher.setColor): Now can be used to change the colors
+	(Watcher.run): Keystrokes for color changing
+
