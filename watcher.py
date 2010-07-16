@@ -8,6 +8,9 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.5  2010-07-16 23:41:02  tino
+# Still GUI things made slightly better
+#
 # Revision 1.4  2010-07-16 16:03:26  tino
 # keystroke commands, more layout, resize handling, etc.
 #
@@ -17,20 +20,28 @@
 # Revision 1.2  2010-07-15 07:28:46  tino
 # See ANNOUNCE
 
-import curses, sys, os, fcntl, socket, stat, time, warnings
+import sys
+import os
+import fcntl
+import stat
+import time
+import socket
+import warnings
+import errno
+import curses
 
 BUFSIZ=4096
 MAX_HIST=10000
 
 def nonblocking(fd):
-	flags	= fcntl.fcntl(fd, fcntl.F_GETFL)
+	flags = fcntl.fcntl(fd, fcntl.F_GETFL)
 	fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
 
 class WatchPipe():
 
 	def __init__(self,fd,name):
-		self.name	= name;
-		self.fd		= fd
+		self.name = name;
+		self.fd = fd
 		nonblocking(fd)
 
 	def check(self):
@@ -40,61 +51,63 @@ class WatchPipe():
 		if self.fd<0:	return None
 
 		try:
-			data	= os.read(self.fd,BUFSIZ)
+			data = os.read(self.fd,BUFSIZ)
 		except OSError:
 			return None
 
-		if len(data)>0:
+		if data:
 			return data
 
 		os.close(self.fd)
-		self.fd	= -1;
+		self.fd = -1;
 #		self.remove.remove(self)
 		return None
 
 class WatchFile():
 
 	def __init__(self,name):
-		self.name	= name
-		self.init	= True
-		self.sock	= None
-		self.pos	= 0
-		self.fd		= -1
+		self.name = name
+		self.init = True
+		self.sock = None
+		self.pos = 0
+		self.fd = -1
 
 	def close(self):
 		if self.fd<0: return
 		if self.sock:
 			self.sock.close()
-			self.sock	= None
+			self.sock = None
 		else:
 			os.close(self.fd)
-		self.fd	= -1
+		self.fd = -1
 
 	def open_socket(self):
-		self.sock	= socket.socket(socket.AF_UNIX)
+		self.sock = socket.socket(socket.AF_UNIX)
 		self.sock.connect(self.name)
-		self.fd		= self.sock.fileno()
+		self.fd = self.sock.fileno()
 		nonblocking(self.fd)
 
 	def open_file(self):
-		self.fd		= os.open(self.name,os.O_RDONLY|os.O_NONBLOCK)
+		self.fd = os.open(self.name,os.O_RDONLY|os.O_NONBLOCK)
 		if self.init:
-			self.init	= False
-			self.pos	= os.lseek(self.fd,0,os.SEEK_END)
-			self.pos	= os.lseek(self.fd,max(0,self.pos-MAX_HIST),os.SEEK_SET)
+			self.init = False
+			self.pos = os.lseek(self.fd,0,os.SEEK_END)
+			self.pos = os.lseek(self.fd,max(0,self.pos-MAX_HIST),os.SEEK_SET)
 
 	def open(self):
 		if self.fd>=0:	return True
 		try:
-			self.pos	= 0
-			self.stat	= os.stat(self.name)
+			# Yes really catch anything here
+			# self.pos may be a failing setter
+			self.pos = 0
+			self.stat = os.stat(self.name)
 			if stat.S_ISSOCK(self.stat.st_mode):
 				self.open_socket()
 			else:
 				self.open_file()
 			return True
-		except:
-			self.init	= False
+		except Exception:
+			self.init = False
 			self.close()
 		return False
 
@@ -105,10 +118,10 @@ class WatchFile():
 	def check(self):
 		if self.fd>=0 and self.sock==None:
 			try:
-				st	= os.stat(self.name)
-				if st.st_ino!=self.stat.st_ino:
+				st = os.stat(self.name)
+				if st.st_ino != self.stat.st_ino:
 					self.close()
-			except:
+			except Exception:
 				self.close()
 		if self.fd<0:
 			return self.open()
@@ -118,119 +131,128 @@ class WatchFile():
 		if self.fd<0: return None
 
 		if self.sock:
-			data	= []
+			data = []
 			try:
 				for i in range(1,20):
 					data.append(self.sock.recv(BUFSIZ))
-			except socket.error,(e,s):
-				if e!=11:
+			except socket.error as (e,s):
+				if e != errno.EAGAIN:
 					raise
 			data=''.join(data)
-			if data=='': return None
-			self.pos	+= len(data)
+			if not data:	return None
+			self.pos += len(data)
 			return data
 
 		try:
-			st	= os.fstat(self.fd)
-		except:
+			st = os.fstat(self.fd)
+		except OSError:
 			self.close()
 			return None
 
-		if st.st_size<self.pos:
+		if st.st_size < self.pos:
 			# File has shrunken
 			if not self.reopen():
 				return None
 
-		if st.st_size==self.pos:
+		if st.st_size == self.pos:
 			return None
 
 		try:
-			data	= os.read(self.fd,BUFSIZ)
+			data = os.read(self.fd,BUFSIZ)
 		except IOError:
 			return None
-		self.pos	+= len(data)
+		self.pos += len(data)
 		return data
 
 class FileOb:
 	def __init__(self,file):
-		self.file	= file
-		self.win	= None
-		self.hist	= ""
+		self.file = file
+		self.win = None
+		self.hist = ""
 
 class Watcher():
 
-	scr	= None
-	files	= []
-	open	= {}
-	windows	= 0
-	jump	= False
-	minlines= 7
-	gridcolor	= 0
-	cursorcolor	= 0
-	warncolor	= 0
+	# Speed of GUI, do reads each WAIT_TENTHS/10 seconds
+	WAIT_TENTHS = 3
+	# check inode change each WAIT_TENTHS * RECHECK_COUNT / 10 seconds
+	RECHECK_COUNT = 10
 
-	C_BORDER	= 8
-	C_WARN		= 9
-	C_RED		= 10
-	C_CURSOR	= 11
+	scr = None
+	files = []
+	open = {}
+	windows = 0
+	jump = False
+	minlines = 7
+
+	gridcolor = 3
+	cursorcolor = 1
+	warncolor = 5
+
+	C_BORDER = 8
+	C_WARN = 9
+	C_RED = 10
+	C_CURSOR = 11
 
 	def __init__(self):
-		self.count	= 0;
+		self.count = 0;
 
 	def add(self, file):
 		self.files.append(FileOb(file))
 
-	def checkFiles(self):
+	def check_files(self):
 		for a in self.files:
 			if a.file.check():
+				self.scr.addstr(a.ty,a.tx,'ok ')
 				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(self.C_BORDER))
 			else:
+				self.scr.addstr(a.ty,a.tx,'** ')
 				self.scr.chgat(a.ty,a.tx,a.w,curses.color_pair(self.C_RED))
 
 	def newWin(self,a):
-		p	= int(self.windows / self.tiles)
-		n	= self.windows % self.tiles
+		p = int(self.windows / self.tiles)
+		n = self.windows % self.tiles
 
-		y	= 2+p*(self.height+1)
-		x	= n*(self.width+1)
+		y = 2+p*(self.height+1)
+		x = n*(self.width+1)
 
-		h,w	= self.scr.getmaxyx()
+		h,w = self.scr.getmaxyx()
 		assert h>2 and w>2
 
-		h	-= y
-		w	-= x
+		h -= y
+		w -= x
 		if h>=self.height*2:
-			h	= self.height
+			h = self.height
 		if w>=self.width*2:
-			w	= self.width
+			w = self.width
 
 		assert h>0 and w>0 and y>=0 and x>=0
-		win	= self.scr.subwin(h,w,y,x)
+		win = self.scr.subwin(h,w,y,x)
 		self.defaults(win)
 
 		if n+1<self.tiles:
 			self.scr.attron(curses.color_pair(self.C_BORDER))
 			self.scr.vline(y-1,x+w,32,h+1)
 			self.scr.attroff(curses.color_pair(self.C_BORDER))
-		a.tx	= x
-		a.ty	= y-1
-		a.w	= w
-		a.h	= h
-		self.scr.addstr(y-1,x,a.file.name[-w:]+" "*max(0,w-len(a.file.name)))
+		a.tx = x
+		a.ty = y-1
+		a.w = w
+		a.h = h
+		s = "   "+a.file.name
+		self.scr.addstr(y-1,x,s[-w:]+" "*max(0,w-len(s)))
 		self.scr.chgat(y-1,0,curses.color_pair(self.C_BORDER))
 		win.scrollok(1)
 		win.idcok(1)
 		win.idlok(1)
 
-		self.windows	+= 1
+		self.windows += 1
 
-		a.win	= win
-		a.nl	= False
-		a.x	= 0
-		a.y	= 0
-		a.warn	= curses.A_NORMAL
+		a.win = win
+		a.nl = False
+		a.x = 0
+		a.y = 0
+		a.warn = curses.A_NORMAL
 
-		if len(a.hist):
+		if a.hist:
 			self.update(a,a.hist)
 
 	def scroll(self,a):
@@ -241,49 +263,49 @@ class Watcher():
 			a.win.move(a.win.getyx()[0],0)
 
 	def readFiles(self):
-		self.count	+= 1
-		if self.count>3:
-			self.count	= 0
-			self.checkFiles()
+		self.count += 1
+		if self.count>self.RECHECK_COUNT:
+			self.count = 0
+			self.check_files()
 		for a in self.files:
-			data	= a.file.read()
-			if data==None: continue
+			data = a.file.read()
+			if not data: continue
 			self.update(a,data)
-			if len(data)>=MAX_HIST:
-				a.hist	= data[-MAX_HIST:]
+			if len(data) >= MAX_HIST:
+				a.hist = data[-MAX_HIST:]
 			else:
-				a.hist	= a.hist[max(-len(a.hist),len(data)-MAX_HIST):]+data
+				a.hist = a.hist[max(-len(a.hist),len(data)-MAX_HIST):]+data
 
 	def update(self,a,data):
-		win	= a.win
+		win = a.win
 		win.chgat(a.y,0,a.warn)
 		win.move(a.y,a.x)
 		y=a.y
 		for c in data:
-			c=ord(c)
+			c = ord(c)
 			if c==13:
 				win.move(win.getyx()[0],0)
 				continue
 			if c==10:
-				a.nl	= True
+				a.nl = True
 				continue
 			if a.nl:
 				try:
 					win.move(win.getyx()[0]+1,0)
 					win.clrtoeol()
-				except:
+				except Exception:
 					self.scroll(a)
-				a.nl	= False
-				a.warn	= curses.A_NORMAL
+				a.nl = False
+				a.warn = curses.A_NORMAL
 			if c==7:
-				a.warn	= curses.color_pair(self.C_WARN)
+				a.warn = curses.color_pair(self.C_WARN)
 				y,x=win.getyx()
 				win.chgat(y,0,a.warn)
 				win.move(y,x)
 				continue
 			try:
 				win.addch(c,a.warn)
-			except:
+			except Exception:
 				self.scroll(a)
 				win.addch(c,a.warn)
 
@@ -312,20 +334,28 @@ class Watcher():
 			return curses.COLOR_CYAN
 		return curses.COLOR_BLACK
 
+	def contrastRed(self,color):
+		if color==curses.COLOR_MAGENTA:
+			return curses.COLOR_BLUE
+		if color==curses.COLOR_RED:
+			return curses.COLOR_BLACK
+		return curses.COLOR_RED
+
 	def color(self,value):
-		cols	= [curses.COLOR_BLUE,curses.COLOR_GREEN,curses.COLOR_YELLOW,curses.COLOR_CYAN,curses.COLOR_MAGENTA,curses.COLOR_RED,curses.COLOR_WHITE,curses.COLOR_BLACK]
+		cols = [curses.COLOR_BLUE,curses.COLOR_GREEN,curses.COLOR_YELLOW,curses.COLOR_CYAN,curses.COLOR_MAGENTA,curses.COLOR_RED,curses.COLOR_WHITE,curses.COLOR_BLACK]
 		return cols[value%len(cols)]
 
 	def setSingleColor(self,color,value):
-		bg	= self.color(value)
+		bg = self.color(value)
 		curses.init_pair(color,self.contrast(bg),bg)
 
 	def setColor(self):
 		self.setSingleColor(self.C_BORDER, self.gridcolor)
-		self.setSingleColor(self.C_CURSOR, self.cursorcolor+1)
-		self.setSingleColor(self.C_WARN,   self.warncolor+5)
+		self.setSingleColor(self.C_CURSOR, self.cursorcolor)
+		self.setSingleColor(self.C_WARN,   self.warncolor)
 
-		curses.init_pair(self.C_RED,curses.COLOR_RED,curses.COLOR_BLUE)
+		fg = self.color(self.gridcolor)
+		curses.init_pair(self.C_RED, self.contrastRed(fg),fg)
 
 	def defaults(self,win):
 		win.idcok(1)
@@ -337,29 +367,29 @@ class Watcher():
 
 		if minlines!=None:
 			if self.minlines==minlines: return
-			self.minlines	= minlines
+			self.minlines = minlines
 
 		self.scr.clear()
 		self.defaults(self.scr)
 		self.scr.redrawwin()
 		self.setColor()
 
-		h,w	= self.scr.getmaxyx()
+		h,w = self.scr.getmaxyx()
 		assert h>2 and w>2
 
-		minlines	= self.minlines
+		minlines = self.minlines
 		if minlines<1: minlines=1
 		if minlines>h-2: minlines=h-2
 
-		d	= int((h-1)/(minlines+1))
-		d	= int((len(self.files)+d-1)/d)
-		n	= int((len(self.files)+d-1)/d)
+		d = int((h-1)/(minlines+1))
+		d = int((len(self.files)+d-1)/d)
+		n = int((len(self.files)+d-1)/d)
 
-		self.tiles	= d
-		self.width	= int((w-d+1)/d)
-		self.height	= int((h-1-n)/n)
+		self.tiles = d
+		self.width = int((w-d+1)/d)
+		self.height = int((h-1-n)/n)
 
-		self.windows	= 0
+		self.windows = 0
 		for a in self.files:
 			self.newWin(a)
 
@@ -378,92 +408,110 @@ class Watcher():
 				break
 		if s=='[' or s==']':
 			return "%s(%d)" % (s,c);
-		return "%s[%d]" % (s,c);
+		return "%s[%d]" % (s,c)
+
+	def out(self,y,x,text,win=None):
+		if win==None:
+			win=self.scr
+
+		h,w=win.getmaxyx()
+
+		if x<0:	x=w+x-len(text)+1
+		if x<0:	x=0
+
+		if y<0: y=h+y
+		if y<0: y=0
+
+		if x+1>=w: return	# cannot print anything, out of screen
+		if y>=h: return # ditto
+
+		win.addnstr(y,x,text,w-x)
+		if x+len(text)<w:
+			win.clrtoeol()
 
 	def run(self,scr):
-		self.scr	= scr
+		self.scr = scr
 
 		curses.nonl()
-		curses.halfdelay(3)
+		curses.halfdelay(self.WAIT_TENTHS)
 		try:
 			curses.curs_set(0)
-		except:
+		except Exception:
 			pass
 
 		self.layout()
-		self.checkFiles()
+		self.check_files()
 
-		host	= socket.getfqdn()
+		host = socket.getfqdn()
 		try:
-			user	= os.getlogin()
-		except:
-			user	= os.environ['USERNAME']
+			user = os.getlogin()
+		except Exception:
+			user = os.environ['USERNAME']
 
-		c	= 0
-		cwd	= "CWD "+os.getcwd()
-		s	= None
-		ticks	= 0
-		haveMsg	= False
-		last	= None
-		loop	= True
-		c0	= None
-		c1	= None
+		c = 0
+		cwd = "CWD "+os.getcwd()
+		s = None
+		ticks = 0
+		haveMsg = False
+		last = None
+		loop = True
+		c0 = None
+		c1 = None
+		fast = False
 		while loop:
-			c2	= c1
-			c1	= c0
-			c0	= None
+			c2 = c1
+			c1 = c0
+			c0 = None
 			if s:
-				ticks	= 20
+				ticks = 20
 
 			if ticks==0:
-				s	= cwd
-				ticks	= -1
+				s = cwd
+				ticks = -1
 
-			now	= int(time.time())
+			now = int(time.time())
 			if now!=last:
-				ticks	-= 1
-				t	= "(%s@%s) %s" % (user, host, time.strftime("%a %Y-%m-%d %H:%M:%S %Z"))
-				scr.addstr(0,max(2,scr.getmaxyx()[1]-len(t)),t)
+				ticks -= 1
+				self.out(0,-1," (%s@%s) %s" % (user, host, time.strftime("%a %Y-%m-%d %H:%M:%S %Z")))
 				if last:
 					if now<last:
-						s	= "Time went backwards"
-						ticks	= -1
+						s = "Time went backwards"
+						ticks = -1
 					elif now>last+10:
-						s	= "Time jump"
-						ticks	= -1
-				last	= now
+						s = "Time jump"
+						ticks = -1
+				last = now
 
 			if s:
 				scr.move(0,0)
 				if c0 or c1 or c2:
-					scr.addstr(c0 or c1 or c2)
-					scr.addstr(" ")
-				scr.addstr(s)
-				scr.clrtoeol()
-				s	= None
+					s=(c0 or c1 or c2)+" "+s
+				self.out(0,0,s)
+				s = None
 
 			scr.move(0,0)
 			scr.refresh()
 
-			c	= scr.getch()
+			c = scr.getch()
 			if c<0:
 				self.readFiles()
 				continue
 
 			c0=self.charcode(c)
-			if c1 or c2:
+			if fast and (c1 or c2):
 				c0=(c1 or c2)+c0
 				c1=None
 				c2=None
 				s="typed too fast"
 				continue
 
-			s="Quit Color Jump Scroll 1-9"
+			fast = False
 
 			if c==curses.KEY_RESIZE:
 				s="Resized "+self.layout()
 			if c==12:
 				s="Redraw "+self.layout()
+				fast=True
 			if c==99:
 				self.cursorcolor+=1
 				self.setColor()
@@ -496,11 +544,16 @@ class Watcher():
 				s="Quit"
 				loop=False
 			if c==106:	#j
-				self.jump	= True
+				self.jump = True
 				s="Jump mode"
 			if c==115:	#s
-				self.jump	= False
+				self.jump = False
 				s="Scroll mode"
+
+			if s==None:
+				s = "Help: Quit Color Jump Scroll 1-9"
+				fast = True
+
 		scr.refresh()
 
 	def main(self):
@@ -508,7 +561,7 @@ class Watcher():
 
 
 if __name__=="__main__":
-	w	= Watcher()
+	w = Watcher()
 	for a in sys.argv[1:]:
 		if a=="-":
 			w.add(WatchPipe(os.dup(0),"-stdin-"))
