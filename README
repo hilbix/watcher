@@ -1,0 +1,17 @@
+$Header$
+
+If you find some bug or think you need an interesting feature
+(interesting for me, not for you) leave me a message at
+URL https://hydra.geht.net/pager.php
+
+If you want to send patches, please be sure to waive your Copyright on
+the changes first, else they are incompatible to the CLL.
+You can upload the patches to
+URL https://hydra.geht.net/upload.php
+
+Tino <webmaster@scylla-charybdis.com>
+http://www.scylla-charybdis.com/tool.php/watcher
+$Log$
+Revision 1.1  2010-07-16 23:41:14  tino
+added
+
