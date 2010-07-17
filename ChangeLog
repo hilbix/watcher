@@ -1,6 +1,12 @@
 2010-07-17  Valentin Hilbig  <tino@zoo.03.softkill.net>
 
 	* watcher.py: more pythonic
+	(Watcher.layoutImp): fixed division by 0 in case of 0 files
+	(Watcher.scroll): now scrolling is only enabled if scrolling, so
+	jump mode works.
+	(Watcher.layoutImp): hint if there are no files to watch
+	(move_terminal_to_fd, WatchPipe.__init__): refuse stdin if
+	problematic, this fixes multiple - values as well
 
 2010-07-16  Valentin Hilbig  <tino@zoo.03.softkill.net>
 

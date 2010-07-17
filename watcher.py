@@ -8,6 +8,9 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.6  2010-07-17 20:23:57  tino
+# See ANNOUNCE
+#
 # Revision 1.5  2010-07-16 23:41:02  tino
 # Still GUI things made slightly better
 #
@@ -42,7 +45,8 @@ class WatchPipe():
 	def __init__(self,fd,name):
 		self.name = name;
 		self.fd = fd
-		nonblocking(fd)
+		if fd>=0:
+			nonblocking(fd)
 
 	def check(self):
 		return self.fd>=0
@@ -240,7 +244,6 @@ class Watcher():
 		s = "   "+a.file.name
 		self.scr.addstr(y-1,x,s[-w:]+" "*max(0,w-len(s)))
 		self.scr.chgat(y-1,0,curses.color_pair(self.C_BORDER))
-		win.scrollok(1)
 		win.idcok(1)
 		win.idlok(1)
 
@@ -259,7 +262,9 @@ class Watcher():
 		if self.jump:
 			a.win.move(0,0)
 		else:
+			a.win.scrollok(1)
 			a.win.scroll()
+			a.win.scrollok(0)
 			a.win.move(a.win.getyx()[0],0)
 
 	def readFiles(self):
@@ -381,9 +386,10 @@ class Watcher():
 		if minlines<1: minlines=1
 		if minlines>h-2: minlines=h-2
 
+		n = max(1,len(self.files))
 		d = int((h-1)/(minlines+1))
-		d = int((len(self.files)+d-1)/d)
-		n = int((len(self.files)+d-1)/d)
+		d = int((n+d-1)/d)
+		n = int((n+d-1)/d)
 
 		self.tiles = d
 		self.width = int((w-d+1)/d)
@@ -392,6 +398,9 @@ class Watcher():
 		self.windows = 0
 		for a in self.files:
 			self.newWin(a)
+
+		if not self.files:
+			self.out(1,0,"Empty commandline: missing files, unix sockets or '-' for stdin.  Press q to quit.")
 
 	def layout(self,minlines=None):
 		self.layoutImp(minlines)
@@ -559,13 +568,25 @@ class Watcher():
 	def main(self):
 		curses.wrapper(lambda scr:self.run(scr))
 
+def move_terminal_to_fd(fd,tty):
+	if not os.isatty(tty):	raise Exception("fd %d not a TTY" % tty)
+	if os.isatty(fd):
+		# Well, we have a tty there, maybe that it is a different PTY?
+		if os.fstat(fd).st_ino == os.fstat(tty).st_ino:
+			# Well, this did not work
+			# return error
+			return -1
+		# fd and tty refer to different TTYs here
+
+	ret = os.dup(fd)
+	os.dup2(tty,fd)
+	return ret
 
 if __name__=="__main__":
 	w = Watcher()
 	for a in sys.argv[1:]:
 		if a=="-":
-			w.add(WatchPipe(os.dup(0),"-stdin-"))
-			os.dup2(1,0)
+			w.add(WatchPipe(move_terminal_to_fd(0,2),"-stdin-"))
 		else:
 			w.add(WatchFile(a))
 	w.main()

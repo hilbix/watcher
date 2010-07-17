@@ -1,11 +1,5 @@
-Window resize, keystrokes, improvments
+Bugfixes
 
-Resizing the terminal should work now.
-
-Jump mode does avoid scrolling.
-
-Colors can be changed (not permanently yet).
-
-The keystrokes received are printed now completely.
-
-The status line (first line) now has a purpose, shows time etc.
+Jump mode now works as expected.
+Does not crash if started without arguments.
+Stdin is only used (when given) if it is ok to use.

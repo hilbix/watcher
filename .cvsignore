@@ -3,4 +3,4 @@ Makefile.md5
 *.d
 ?*.cvsignore*
 watcher
-watcher_version.h
+_version.h
