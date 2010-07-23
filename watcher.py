@@ -8,6 +8,9 @@
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 #
 # $Log$
+# Revision 1.8  2010-07-23 00:37:30  tino
+# Typo in changed code
+#
 # Revision 1.7  2010-07-23 00:33:39  tino
 # more pythonic formatting
 # Bugfix for socket-close
@@ -153,7 +156,7 @@ class WatchFile():
 			if not data:
 				if eof:	self.close()
 				return None
-			self.data += len(data)
+			self.pos += len(data)
 			return data
 
 		try:
