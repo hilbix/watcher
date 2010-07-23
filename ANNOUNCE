@@ -1,5 +1,4 @@
-Bugfixes
+Bugfix
 
-Jump mode now works as expected.
-Does not crash if started without arguments.
-Stdin is only used (when given) if it is ok to use.
+EOF on unix sockets now is detected
+

@@ -1,3 +1,9 @@
+2010-07-23  Valentin Hilbig  <tino@zoo.03.softkill.net>
+
+	* watcher.py (WatchFile.read): EOF detection (socket close).  EOF
+	is signalled by empty string of recv, not with an exception (why
+	not?).  This case is now detected, too.
+
 2010-07-17  Valentin Hilbig  <tino@zoo.03.softkill.net>
 
 	* watcher.py: more pythonic
