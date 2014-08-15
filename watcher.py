@@ -1,34 +1,10 @@
 #!/usr/bin/env python2.6
 #
-# $Header$
-#
 # ./watcher.py -|file|sock...
 #
 # This Works is placed under the terms of the Copyright Less License,
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
-#
-# $Log$
-# Revision 1.8  2010-07-23 00:37:30  tino
-# Typo in changed code
-#
-# Revision 1.7  2010-07-23 00:33:39  tino
-# more pythonic formatting
-# Bugfix for socket-close
-#
-# Revision 1.6  2010-07-17 20:23:57  tino
-# See ANNOUNCE
-#
-# Revision 1.5  2010-07-16 23:41:02  tino
-# Still GUI things made slightly better
-#
-# Revision 1.4  2010-07-16 16:03:26  tino
-# keystroke commands, more layout, resize handling, etc.
-#
-# Revision 1.3  2010-07-16 00:13:35  tino
-# See ChangeLog
-#
-# Revision 1.2  2010-07-15 07:28:46  tino
-# See ANNOUNCE
+
 
 import sys
 import os
@@ -42,6 +18,20 @@ import curses
 
 BUFSIZ = 4096
 MAX_HIST = 10000
+
+def getuser(fd):
+	try:
+		return os.getlogin()
+	except Exception:
+		pass
+	# WTF? -> never though this can happen!
+	for e in ['USERNAME','LOGNAME','USER']:
+		try:
+			return os.environ[e]
+		except Exception:
+			pass
+	# WTF!
+	return '(unknown user)'
 
 def nonblocking(fd):
 	flags = fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -506,10 +496,7 @@ class Watcher():
 		self.check_files()
 
 		host = socket.getfqdn()
-		try:
-			user = os.getlogin()
-		except Exception:
-			user = os.environ['USERNAME']
+		user = getuser()
 
 		c = 0
 		cwd = "CWD " + os.getcwd()

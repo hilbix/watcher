@@ -1,3 +1,8 @@
+2014-08-15  Valentin Hilbig  <tino@aragog.03.softkill.org>
+
+	* watcher.py (Watcher.run, getuser): fixed issue where startup
+	fails if username cannot be determined for some reason
+
 2010-07-23  Valentin Hilbig  <tino@zoo.03.softkill.net>
 
 	* watcher.py (WatchFile.read): EOF detection (socket close).  EOF
