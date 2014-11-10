@@ -19,7 +19,7 @@ import curses
 BUFSIZ = 4096
 MAX_HIST = 10000
 
-def getuser(fd):
+def getuser():
 	try:
 		return os.getlogin()
 	except Exception:
