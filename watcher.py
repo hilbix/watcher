@@ -5,6 +5,7 @@
 # This Works is placed under the terms of the Copyright Less License,
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
 
+from __future__ import print_function
 
 import sys
 import os
@@ -18,6 +19,14 @@ import curses
 
 BUFSIZ = 4096
 MAX_HIST = 10000
+
+try:
+	debugout = os.fdopen(3, "w")
+except:
+	debugout = None
+
+def debug(*o):
+	if debugout: print("[[DEBUG: ", *(o+("]]\r",)), file=debugout)
 
 def getuser():
 	try:
@@ -187,8 +196,8 @@ class Watcher():
 	files = []
 	open = {}
 	windows = 0
-	jump = False
-	minlines = 7
+	jump = True
+	columns = 2
 
 	gridcolor = 3
 	cursorcolor = 1
@@ -205,6 +214,7 @@ class Watcher():
 
 	def __init__(self):
 		self.count = 0;
+		debug("init")
 
 	def add(self, file):
 		self.files.append(FileOb(file))
@@ -231,27 +241,30 @@ class Watcher():
 		p = int(self.windows / self.tiles)
 		n = self.windows % self.tiles
 
+		self.window[self.windows] = a
+		self.windows += 1
+
 		y = 2+p*(self.height+1)
 		x = n*(self.width+1)
 
 		h,w = self.scr.getmaxyx()
-		assert h>2 and w>2
+		assert h>3 and w>3
+
+		debug("new_win", self.tiles, x,y,w,h)
 
 		h -= y
 		w -= x
 		if h >= self.height*2:
 			h = self.height
-		if w >= self.width*2:
+		if w >= self.width*2 and self.windows<len(self.files):
 			w = self.width
 
+		debug("new_win", n, x,y,w,h)
 		assert h>0 and w>0 and y>=0 and x>=0
 		win = self.scr.subwin(h, w, y, x)
 		self.defaults(win)
 
-		self.window[self.windows] = a
-		self.windows += 1
-
-		if n+1 < self.tiles:
+		if n+1 < self.tiles and self.windows<len(self.files):
 			self.scr.attron(curses.color_pair(self.C_BORDER))
 			self.scr.vline(y-1, x+w, 32, h+1)
 			self.scr.attroff(curses.color_pair(self.C_BORDER))
@@ -392,11 +405,10 @@ class Watcher():
 		win.leaveok(0)
 		win.keypad(1)
 
-	def layout_imp(self, minlines):
-
-		if minlines != None:
-			if self.minlines == minlines: return
-			self.minlines = minlines
+	def layout_imp(self, columns):
+		if columns != None:
+			if self.columns == columns: return
+			self.columns = columns
 
 		self.scr.clear()
 		self.defaults(self.scr)
@@ -404,20 +416,23 @@ class Watcher():
 		self.setColor()
 
 		h,w = self.scr.getmaxyx()
-		assert h>2 and w>2
-
-		minlines = self.minlines
-		if minlines < 1: minlines = 1
-		if minlines > h-2: minlines = h-2
+		assert h>3 and w>3
 
 		n = max(1, len(self.files))
-		d = int((h-1) / (minlines+1))
-		d = int((n+d-1) / d)
-		n = int((n+d-1) / d)
+		d = int(n*2/h)+1
 
-		self.tiles = d
-		self.width = int((w-d+1)/d)
+		columns = self.columns
+		if columns > w/3: columns = int(w/3)
+		if columns < d: columns = d
+		self.tiles = columns
+
+		n = max(1, len(self.files))
+		d = int((w-columns+1) / columns)
+		n = int((n+columns-1) / columns)
+
+		self.width = d
 		self.height = int((h-1-n)/n)
+		debug("layout_imp", columns, len(self.files), self.width, self.height, n)
 
 		self.window = [None for ignored in range(0, n*d)]
 
@@ -428,8 +443,9 @@ class Watcher():
 		if not self.files:
 			self.out(1, 0, "Empty commandline: missing files, unix sockets or '-' for stdin.  Press q to quit.")
 
-	def layout(self, minlines=None):
-		self.layout_imp(minlines)
+	def layout(self, columns=None):
+		debug("layout", columns)
+		self.layout_imp(columns)
 		return "(%dx%d)" % (self.height, self.width)
 
 	def charcode(self, c):
@@ -483,6 +499,7 @@ class Watcher():
 		self.edit_on()
 
 	def run(self, scr):
+		debug("run")
 		self.scr = scr
 
 		curses.nonl()
@@ -571,38 +588,38 @@ class Watcher():
 				s = "Redraw " + self.layout()
 				fast = True
 
-			if c == 99:
+			if c == 99:	# c
 				self.cursorcolor += 1
 				self.setColor()
 				s = "Cursor color"
 
-			if c == 67:
+			if c == 67:	# C
 				self.cursorcolor -= 1
 				self.setColor()
 				s = "Cursor color"
 
-			if c == 103:
+			if c == 103:	# g
 				self.gridcolor += 1
 				self.setColor()
 				s = "Grid color"
 
-			if c == 71:
+			if c == 71:	# G
 				self.gridcolor -= 1
 				self.setColor()
 				s = "Grid color"
 
-			if c == 119:
+			if c == 119:	# w
 				self.warncolor -= 1
 				self.setColor()
 				s = "Warn color"
 
-			if c == 87:
+			if c == 87:	# W
 				self.warncolor += 1
 				self.setColor()
 				s = "Warn color"
 
-			if c >= 49 and c < 58:
-				s = "Layout " + self.layout((c-49) * (c-49) + 3)
+			if c >= 48 and c < 58:	# 0-9
+				s = "Layout " + self.layout((c-48) or 10)
 
 			if c == 113:
 				s = "Quit"
@@ -617,12 +634,13 @@ class Watcher():
 				s = "Scroll mode"
 
 			if s == None:
-				s = "Help: Quit Color Jump Scroll 1-9"
+				s = "Help: Quit Warn/Grid/Color Jump/Scroll 0-9"
 				fast = True
 
 		scr.refresh()
 
 	def main(self):
+		debug("main")
 		curses.wrapper(lambda scr:self.run(scr))
 
 def move_terminal_to_fd(fd, tty):
