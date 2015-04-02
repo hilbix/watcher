@@ -256,7 +256,7 @@ class Watcher():
 		w -= x
 		if w >= self.width*2 and self.windows<len(self.files):
 			w = self.width
-		if p+1<int(len(self.files)/self.tiles):
+		if p<int((len(self.files)-1)/self.tiles):
 			h = self.height
 
 		debug("new_win", n, x,y,w,h)
