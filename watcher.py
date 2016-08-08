@@ -182,8 +182,8 @@ class WatchFile():
 class FileOb:
 	def __init__(self, file):
 		self.file = file
-		self.win = None
 		self.hist = ""
+		self.active = False
 
 class Watcher():
 
@@ -193,6 +193,7 @@ class Watcher():
 	RECHECK_COUNT = 10
 
 	scr = None
+	allfiles = []
 	files = []
 	open = {}
 	windows = 0
@@ -211,20 +212,29 @@ class Watcher():
 	edit_mode = False
 	edit_win = 0
 	edit_last = 0
+	ign = 0
 
 	def __init__(self):
 		self.count = 0;
 		debug("init")
 
 	def add(self, file):
-		self.files.append(FileOb(file))
+		self.allfiles.append(FileOb(file))
 
 	def check_files(self):
-		for a in self.files:
+		for a in self.allfiles:
 			if a.file.check():
-				self.scr.addstr(a.ty, a.tx, 'ok ')
-				self.scr.chgat(a.ty, a.tx, a.w, curses.color_pair(self.C_BORDER))
-			else:
+				a.inactive = False
+				if not a.active:
+					self.files.append(a)
+					a.win = None
+					self.redraw = True
+					a.active = True
+				else:
+					self.scr.addstr(a.ty, a.tx, 'ok ')
+					self.scr.chgat(a.ty, a.tx, a.w, curses.color_pair(self.C_BORDER))
+			elif a.active:
+				a.inactive = True
 				self.scr.addstr(a.ty, a.tx, '** ')
 				self.scr.chgat(a.ty, a.tx, a.w, curses.color_pair(self.C_RED))
 
@@ -518,6 +528,7 @@ class Watcher():
 		c = 0
 		cwd = "CWD " + os.getcwd()
 		s = None
+		scol = None
 		ticks = 0
 		haveMsg = False
 		last = None
@@ -529,6 +540,10 @@ class Watcher():
 			c2 = c1
 			c1 = c0
 			c0 = None
+			if self.redraw:
+				self.redraw = False
+				s = (s and s+" " or "") + "Layout" + self.layout()
+
 			if s:
 				ticks = 20
 
@@ -554,6 +569,11 @@ class Watcher():
 				if c0 or c1 or c2:
 					s = (c0 or c1 or c2) + " " + s
 				self.out(0, 0, s)
+				if scol:
+					self.scr.chgat(0, 0, -1, curses.color_pair(scol))
+				else:
+					self.scr.chgat(0, 0, -1, curses.A_NORMAL)
+				scol = None
 				s = None
 
 			scr.move(0, 0)
@@ -584,57 +604,74 @@ class Watcher():
 				if not self.edit_mode:
 					s = s + " off"
 
-			if c == 12:
-				s = "Redraw " + self.layout()
+			if c == 12:	# ^L
+				self.redraw	= True
+				s = "Redraw"
 				fast = True
 
 			if c == 99:	# c
 				self.cursorcolor += 1
 				self.setColor()
 				s = "Cursor color"
+				scol = self.C_CURSOR
 
 			if c == 67:	# C
 				self.cursorcolor -= 1
 				self.setColor()
 				s = "Cursor color"
+				scol = self.C_CURSOR
 
 			if c == 103:	# g
 				self.gridcolor += 1
 				self.setColor()
 				s = "Grid color"
+				scol = self.C_BORDER
 
 			if c == 71:	# G
 				self.gridcolor -= 1
 				self.setColor()
 				s = "Grid color"
+				scol = self.C_BORDER
 
 			if c == 119:	# w
 				self.warncolor -= 1
 				self.setColor()
 				s = "Warn color"
+				scol = self.C_WARN
 
 			if c == 87:	# W
 				self.warncolor += 1
 				self.setColor()
 				s = "Warn color"
+				scol = self.C_WARN
 
 			if c >= 48 and c < 58:	# 0-9
 				s = "Layout " + self.layout((c-48) or 10)
 
-			if c == 113:
+			if c == 113:	# q
 				s = "Quit"
 				loop = False
 
-			if c == 106:	#j
+			if c == 105:	# i
+				self.ign += 1
+				cnt = 0
+				for f in [a for a in self.files if a.inactive]:
+					f.active = False
+					self.files.remove(f)
+					self.redraw = True
+					cnt += 1
+				s = str(cnt)+" inactive files ignored"
+
+			if c == 106:	# j
 				self.jump = True
 				s = "Jump mode"
 
-			if c == 115:	#s
+			if c == 115:	# s
 				self.jump = False
 				s = "Scroll mode"
 
 			if s == None:
-				s = "Help: Quit Warn/Grid/Color Jump/Scroll 0-9"
+				s = "Help: Quit Warn/Grid/Color Jump/Scroll 0-9 Ignore"
 				fast = True
 
 		scr.refresh()

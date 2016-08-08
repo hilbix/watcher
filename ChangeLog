@@ -1,3 +1,8 @@
+2016-08-08  Valentin Hilbig  <tino@giganto.03.softkill.net>
+
+	* watcher.py (Watcher.add, Watcher.check_files, Watcher.run):
+	Ignore inaccessible arguments until they show up
+
 2014-08-15  Valentin Hilbig  <tino@aragog.03.softkill.org>
 
 	* watcher.py (Watcher.run, getuser): fixed issue where startup
