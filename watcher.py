@@ -18,7 +18,7 @@ import errno
 import curses
 
 BUFSIZ = 4096
-MAX_HIST = 10000
+MAX_HIST = 102400	# assumed max screen size: 80x24 / 4x3 * 16x10 * 2x2
 
 try:
 	debugout = os.fdopen(3, "w")
@@ -27,6 +27,144 @@ except:
 
 def debug(*o):
 	if debugout: print("[[DEBUG: ", *(o+("]]\r",)), file=debugout)
+
+
+# curses bullshit start
+#
+# curses is a module.
+# So wrap everything we need into a proper class
+# However, following is plain bullshit,
+# as we only have classfunctions called with a class object instead.
+# Perhaps in future this will be implemented cleanly, we will see.
+# For now it just separates curses from the rest of the code
+
+class CursesColor(object):
+	cycle =	[ curses.COLOR_BLUE
+		, curses.COLOR_GREEN
+		, curses.COLOR_YELLOW
+		, curses.COLOR_CYAN
+		, curses.COLOR_MAGENTA
+		, curses.COLOR_RED
+		, curses.COLOR_WHITE
+		, curses.COLOR_BLACK
+		]
+
+	def __init__(self, parent):
+		self.curses	= parent
+
+	def contrast(self, color):
+		if color == curses.COLOR_BLUE or color == curses.COLOR_RED:
+			return curses.COLOR_WHITE
+		if color == curses.COLOR_BLACK:
+			return curses.COLOR_CYAN
+		return curses.COLOR_BLACK
+
+	def contrastRed(self, color):
+		if color == curses.COLOR_MAGENTA:
+			return curses.COLOR_BLUE
+		if color == curses.COLOR_RED:
+			return curses.COLOR_BLACK
+		return curses.COLOR_RED
+
+	def toCurses(self, color):
+		return color+8
+
+	def pair(self, color):
+		return curses.color_pair(self.toCurses(color))
+
+
+	def normal(self):
+		return curses.A_NORMAL
+
+	def underline(self, color):
+		return curses.A_UNDERLINE | color
+
+	def reverse(self, color):
+		return curses.A_REVERSE | color
+
+
+	def get(self, value):
+		return self.cycle[value % len(self.cycle)]
+
+	def set(self, color, value):
+		bg = self.get(value)
+		curses.init_pair(self.toCurses(color), self.contrast(bg), bg)
+
+	def setRed(self, color, value):
+		fg = self.get(value)
+		curses.init_pair(self.toCurses(color), self.contrastRed(fg), fg)
+
+class Curses(object):
+
+	# I am not happy with this
+	def __init__(self, runClass):
+		"""duck typing: call runClass.run(scr) from curses"""
+		self.color	= CursesColor(self)
+		self.main	= runClass
+		self.scr	= None
+		curses.wrapper(lambda scr:self.run(scr))
+
+	def run(self, scr):
+		self.scr	= scr
+		self.main.run(self)	# shall become .run(self) in future!
+
+	def print(self, y, x, text, win=None):
+		if win == None:
+			win = self.scr
+
+		h,w = win.getmaxyx()
+
+		if x < 0: x = w+x - len(text) + 1
+		if x < 0: x = 0
+
+		if y < 0: y = h + y
+		if y < 0: y = 0
+
+		if x+1 >= w: return	# cannot print anything, out of screen
+		if y >= h: return	# ditto
+
+		win.addnstr(y, x, text, w-x)
+		if x+len(text)<w:
+			win.clrtoeol()
+
+	def isResize(self, c):
+		return c == curses.KEY_RESIZE
+
+	def saneMode(self):
+		"""Do all the usual curses quirx stuff"""
+		curses.nonl()
+
+	def showCursor(self, on):
+		"""enable/disable hardware cursor"""
+		try:
+			curses.curs_set(on and 1 or 0)
+		except Exception:
+			pass
+
+	def timeout(self, tenth):
+		"""set timeout for getch()"""
+		curses.halfdelay(tenth)
+
+	def charcode(self, c):
+		s = ""
+		if c == 27: s = "ESC"
+		if c == 32: s = "SPC"
+		if c > 32 and c < 127: s = "%c" % c
+		for k,v in curses.__dict__.iteritems():
+			if k.startswith("KEY_") and v == c:
+				s = k[4:]
+				break
+		if s == '[' or s == ']':
+			return "%s(%d)" % (s,c)
+		return "%s[%d]" % (s,c)
+
+	def getch(self):
+		return self.scr.getch()
+
+# curses bullshit ends
+# I do not want to see curses.XXX references below anymore
+# However we still rely on the curses window concept.
+# Perhaps I will wrap this in future, too.
 
 def getuser():
 	try:
@@ -49,7 +187,7 @@ def nonblocking(fd):
 class WatchPipe():
 
 	def __init__(self, fd, name):
-		self.name = name;
+		self.name = name
 		self.fd = fd
 		if fd >= 0:
 			nonblocking(fd)
@@ -69,7 +207,7 @@ class WatchPipe():
 			return data
 
 		os.close(self.fd)
-		self.fd = -1;
+		self.fd = -1
 #		self.remove.remove(self)
 		return None
 
@@ -185,12 +323,13 @@ class FileOb:
 		self.hist = ""
 		self.active = False
 
+
 class Watcher():
 
 	# Speed of GUI, do reads each WAIT_TENTHS/10 seconds
 	WAIT_TENTHS = 3
 	# check inode change each WAIT_TENTHS * RECHECK_COUNT / 10 seconds
-	RECHECK_COUNT = 10
+	RECHECK_COUNT = 20
 
 	scr = None
 	allfiles = []
@@ -200,14 +339,11 @@ class Watcher():
 	jump = True
 	columns = 2
 
-	gridcolor = 3
-	cursorcolor = 1
-	warncolor = 5
-
-	C_BORDER = 8
-	C_WARN = 9
-	C_RED = 10
-	C_CURSOR = 11
+	colors = [ -1, 3, 1, 5, -1 ]	# -1: unused
+	C_BORDER=1	# user preference
+	C_CURSOR=2	# user preference
+	C_WARN=3	# user preference
+	C_RED=4		# computed
 
 	edit_mode = False
 	edit_win = 0
@@ -215,7 +351,7 @@ class Watcher():
 	ign = 0
 
 	def __init__(self):
-		self.count = 0;
+		self.count = 0
 		debug("init")
 
 	def add(self, file):
@@ -232,19 +368,19 @@ class Watcher():
 					a.active = True
 				else:
 					self.scr.addstr(a.ty, a.tx, 'ok ')
-					self.scr.chgat(a.ty, a.tx, a.w, curses.color_pair(self.C_BORDER))
+					self.scr.chgat(a.ty, a.tx, a.w, self.out.color.pair(self.C_BORDER))
 			elif a.active:
 				a.inactive = True
 				self.scr.addstr(a.ty, a.tx, '** ')
-				self.scr.chgat(a.ty, a.tx, a.w, curses.color_pair(self.C_RED))
+				self.scr.chgat(a.ty, a.tx, a.w, self.out.color.pair(self.C_RED))
 
 	def win_title(self, a, marked=False):
 		s = "   " + a.file.name
 		w = a.w
 		self.scr.addstr(a.ty, a.tx, s[-w:] + " "*max(0, w-len(s)))
-		att = curses.color_pair(self.C_BORDER)
+		att = self.out.color.pair(self.C_BORDER)
 		if marked:
-			att = curses.color_pair(self.C_RED)
+			att = self.out.color.pair(self.C_RED)
 		self.scr.chgat(a.ty, a.tx, w, att)
 
 	def new_win(self, a, last=False):
@@ -275,9 +411,9 @@ class Watcher():
 		self.defaults(win)
 
 		if n+1 < self.tiles and self.windows<len(self.files):
-			self.scr.attron(curses.color_pair(self.C_BORDER))
+			self.scr.attron(self.out.color.pair(self.C_BORDER))
 			self.scr.vline(y-1, x+w, 32, h+1)
-			self.scr.attroff(curses.color_pair(self.C_BORDER))
+			self.scr.attroff(self.out.color.pair(self.C_BORDER))
 		a.tx = x
 		a.ty = y-1
 		a.w = w
@@ -285,9 +421,10 @@ class Watcher():
 
 		a.win = win
 		a.nl = False
+		a.jump = False
 		a.x = 0
 		a.y = 0
-		a.warn = curses.A_NORMAL
+		a.warn = self.out.color.normal()
 
 		self.win_title(a)
 
@@ -297,11 +434,13 @@ class Watcher():
 	def scroll(self, a):
 		if self.jump:
 			a.win.move(0, 0)
+			a.jump = True
 		else:
 			a.win.scrollok(1)
 			a.win.scroll()
 			a.win.scrollok(0)
 			a.win.move(a.win.getyx()[0], 0)
+			a.jump = False
 
 	def read_files(self):
 		self.count += 1
@@ -337,9 +476,9 @@ class Watcher():
 				except Exception:
 					self.scroll(a)
 				a.nl = False
-				a.warn = curses.A_NORMAL
+				a.warn = self.out.color.normal()
 			if c == 7:
-				a.warn = curses.color_pair(self.C_WARN)
+				a.warn = self.out.color.pair(self.C_WARN)
 				y,x = win.getyx()
 				win.chgat(y, 0, a.warn)
 				win.move(y, x)
@@ -361,53 +500,22 @@ class Watcher():
 				
 		a.y,a.x = win.getyx()
 		if a.nl:
-			if a.warn != curses.A_NORMAL:
-				win.chgat(a.y, a.x, a.warn|curses.A_UNDERLINE)
+			if a.warn != self.out.color.normal():
+				win.chgat(a.y, a.x, self.out.color.underline(a.warn))
 			else:
-				win.chgat(a.y, a.x, curses.color_pair(self.C_CURSOR)|curses.A_UNDERLINE)
+				win.chgat(a.y, a.x, self.out.color.underline(self.out.color.pair(self.C_CURSOR)))
 		else:
-			if self.jump:
-				win.chgat(a.y, 0, a.warn|curses.A_REVERSE)
-			win.chgat(a.y, a.x, 1, curses.color_pair(self.C_CURSOR))
+			if a.jump:
+				win.chgat(a.y, 0, self.out.color.reverse(a.warn))
+			win.chgat(a.y, a.x, 1, self.out.color.pair(self.C_CURSOR))
 
 		win.noutrefresh()
 
-	def contrast(self, color):
-		if color == curses.COLOR_BLUE or color == curses.COLOR_RED:
-			return curses.COLOR_WHITE
-		if color == curses.COLOR_BLACK:
-			return curses.COLOR_CYAN
-		return curses.COLOR_BLACK
-
-	def contrastRed(self, color):
-		if color == curses.COLOR_MAGENTA:
-			return curses.COLOR_BLUE
-		if color == curses.COLOR_RED:
-			return curses.COLOR_BLACK
-		return curses.COLOR_RED
-
-	def color(self, value):
-		cols = [curses.COLOR_BLUE
-			, curses.COLOR_GREEN
-			, curses.COLOR_YELLOW
-			, curses.COLOR_CYAN
-			, curses.COLOR_MAGENTA
-			, curses.COLOR_RED
-			, curses.COLOR_WHITE
-			, curses.COLOR_BLACK]
-		return cols[value%len(cols)]
-
-	def setSingleColor(self, color, value):
-		bg = self.color(value)
-		curses.init_pair(color, self.contrast(bg), bg)
-
 	def setColor(self):
-		self.setSingleColor(self.C_BORDER, self.gridcolor)
-		self.setSingleColor(self.C_CURSOR, self.cursorcolor)
-		self.setSingleColor(self.C_WARN,   self.warncolor)
-
-		fg = self.color(self.gridcolor)
-		curses.init_pair(self.C_RED, self.contrastRed(fg), fg)
+		self.out.color.set(self.C_BORDER, self.colors[self.C_BORDER])
+		self.out.color.set(self.C_CURSOR, self.colors[self.C_CURSOR])
+		self.out.color.set(self.C_WARN,   self.colors[self.C_WARN])
+		self.out.color.setRed(self.C_RED, self.colors[self.C_BORDER])
 
 	def defaults(self, win):
 		win.idcok(1)
@@ -451,44 +559,12 @@ class Watcher():
 			self.new_win(a, (self.windows == len(self.files)-1))
 
 		if not self.files:
-			self.out(1, 0, "Empty commandline: missing files, unix sockets or '-' for stdin.  Press q to quit.")
+			self.out.print(1, 0, "Empty commandline: missing files, unix sockets or '-' for stdin.  Press q to quit.")
 
 	def layout(self, columns=None):
 		debug("layout", columns)
 		self.layout_imp(columns)
 		return "(%dx%d)" % (self.height, self.width)
-
-	def charcode(self, c):
-		s = ""
-		if c == 27: s = "ESC"
-		if c == 32: s = "SPC"
-		if c > 32 and c < 127: s = "%c" % c
-		for k,v in curses.__dict__.iteritems():
-			if k.startswith("KEY_") and v == c:
-				s = k[4:]
-				break
-		if s == '[' or s == ']':
-			return "%s(%d)" % (s,c);
-		return "%s[%d]" % (s,c)
-
-	def out(self, y, x, text, win=None):
-		if win == None:
-			win = self.scr
-
-		h,w = win.getmaxyx()
-
-		if x < 0: x = w+x - len(text) + 1
-		if x < 0: x = 0
-
-		if y < 0: y = h + y
-		if y < 0: y = 0
-
-		if x+1 >= w: return	# cannot print anything, out of screen
-		if y >= h: return # ditto
-
-		win.addnstr(y, x, text, w-x)
-		if x+len(text)<w:
-			win.clrtoeol()
 
 	def edit_off(self):
 		if self.edit_last >= 0:
@@ -508,16 +584,20 @@ class Watcher():
 			return
 		self.edit_on()
 
-	def run(self, scr):
+	def run(self, out):
 		debug("run")
-		self.scr = scr
+		self.out = out
 
-		curses.nonl()
-		curses.halfdelay(self.WAIT_TENTHS)
-		try:
-			curses.curs_set(0)
-		except Exception:
-			pass
+		# scr shall be superseeded by out (Curses) in future.
+		# So following is a hack until Curses class is extended a suitable way:
+		scr = out.scr
+		self.scr = scr
+		# curses, scr and win shall be duck typed in future for similar output
+		# so the last argument to "print" will go away
+
+		out.saneMode()
+		out.showCursor(False)
+		out.timeout(self.WAIT_TENTHS)
 
 		self.layout()
 		self.check_files()
@@ -528,7 +608,7 @@ class Watcher():
 		c = 0
 		cwd = "CWD " + os.getcwd()
 		s = None
-		scol = None
+		scol = 0
 		ticks = 0
 		haveMsg = False
 		last = None
@@ -554,7 +634,7 @@ class Watcher():
 			now = int(time.time())
 			if now != last:
 				ticks -= 1
-				self.out(0, -1, " (%s@%s) %s" % (user, host, time.strftime("%a %Y-%m-%d %H:%M:%S %Z")))
+				out.print(0, -1, " (%s@%s) %s" % (user, host, time.strftime("%a %Y-%m-%d %H:%M:%S %Z")))
 				if last:
 					if now<last:
 						s = "Time went backwards"
@@ -568,23 +648,29 @@ class Watcher():
 				scr.move(0, 0)
 				if c0 or c1 or c2:
 					s = (c0 or c1 or c2) + " " + s
-				self.out(0, 0, s)
+				out.print(0, 0, s)
 				if scol:
-					self.scr.chgat(0, 0, -1, curses.color_pair(scol))
+					if scol<0:
+						self.colors[-scol] -= 1
+					else:
+						self.colors[scol] += 1
+					self.setColor()
+					scr.chgat(0, 0, -1, out.color.pair(scol))
+					scr.chgat(0, 0, 10, out.color.reverse(out.color.pair(scol)))
 				else:
-					self.scr.chgat(0, 0, -1, curses.A_NORMAL)
-				scol = None
+					scr.chgat(0, 0, -1, out.color.normal())
+				scol = 0
 				s = None
 
 			scr.move(0, 0)
 			scr.refresh()
 
-			c = scr.getch()
+			c = out.getch()
 			if c<0:
 				self.read_files()
 				continue
 
-			c0 = self.charcode(c)
+			c0 = out.charcode(c)
 			if fast and (c1 or c2):
 				c0 = (c1 or c2)+c0
 				c1 = None
@@ -594,7 +680,7 @@ class Watcher():
 
 			fast = False
 
-			if c == curses.KEY_RESIZE:
+			if out.isResize(c):
 				s = "Resized " + self.layout()
 
 			if False and c == 9:
@@ -610,40 +696,28 @@ class Watcher():
 				fast = True
 
 			if c == 99:	# c
-				self.cursorcolor += 1
-				self.setColor()
 				s = "Cursor color"
 				scol = self.C_CURSOR
 
 			if c == 67:	# C
-				self.cursorcolor -= 1
-				self.setColor()
 				s = "Cursor color"
-				scol = self.C_CURSOR
+				scol = -self.C_CURSOR
 
 			if c == 103:	# g
-				self.gridcolor += 1
-				self.setColor()
 				s = "Grid color"
 				scol = self.C_BORDER
 
 			if c == 71:	# G
-				self.gridcolor -= 1
-				self.setColor()
 				s = "Grid color"
-				scol = self.C_BORDER
+				scol = -self.C_BORDER
 
 			if c == 119:	# w
-				self.warncolor -= 1
-				self.setColor()
 				s = "Warn color"
 				scol = self.C_WARN
 
 			if c == 87:	# W
-				self.warncolor += 1
-				self.setColor()
 				s = "Warn color"
-				scol = self.C_WARN
+				scol = -self.C_WARN
 
 			if c >= 48 and c < 58:	# 0-9
 				s = "Layout " + self.layout((c-48) or 10)
@@ -671,14 +745,10 @@ class Watcher():
 				s = "Scroll mode"
 
 			if s == None:
-				s = "Help: Quit Warn/Grid/Color Jump/Scroll 0-9 Ignore"
+				s = "Help: Quit Warn/Grid/Cursor Jump/Scroll 0-9 Ignore"
 				fast = True
 
 		scr.refresh()
-
-	def main(self):
-		debug("main")
-		curses.wrapper(lambda scr:self.run(scr))
 
 def move_terminal_to_fd(fd, tty):
 	if not os.isatty(tty):	raise Exception("fd %d not a TTY" % tty)
@@ -701,5 +771,5 @@ if __name__ == "__main__":
 			w.add(WatchPipe(move_terminal_to_fd(0, 2), "-stdin-"))
 		else:
 			w.add(WatchFile(a))
-	w.main()
+	Curses(w)
 
