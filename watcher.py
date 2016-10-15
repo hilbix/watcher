@@ -651,7 +651,8 @@ class Watcher():
 				out.print(0, 0, s)
 				if scol:
 					if scol<0:
-						self.colors[-scol] -= 1
+						scol = -scol;
+						self.colors[scol] -= 1
 					else:
 						self.colors[scol] += 1
 					self.setColor()
