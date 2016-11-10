@@ -26,7 +26,7 @@ except:
 	debugout = None
 
 def debug(*o):
-	if debugout: print("[[DEBUG: ", *(o+("]]\r",)), file=debugout)
+	if debugout: print("[[ DEBUG:", *(o+("]]\r",)), file=debugout)
 
 
 # curses bullshit start
@@ -82,6 +82,11 @@ class CursesColor(object):
 	def reverse(self, color):
 		return curses.A_REVERSE | color
 
+	def reverseIf(self, inv, color):
+		return inv and (curses.A_REVERSE ^ color) or color
+
+	def underlineIf(self, inv, color):
+		return inv and (curses.A_UNDERLINE ^ color) or color
 
 	def get(self, value):
 		return self.cycle[value % len(self.cycle)]
@@ -320,9 +325,22 @@ class WatchFile():
 class FileOb:
 	def __init__(self, file):
 		self.file = file
-		self.hist = ""
+		self.history = ""
 		self.active = False
+		self.inactive = False
+		self.maxhist = MAX_HIST
+		self.highlight = 0
 
+	def name(self):
+		return self.file.name
+
+	def hist(self):
+		return self.history
+
+	def add(self, data):
+		if not data: return
+		l = len(data)-self.maxhist
+		self.history = l>=0 and data[-self.maxhist:] or ( self.history[max(-len(self.history), l):] + data )
 
 class Watcher():
 
@@ -351,37 +369,56 @@ class Watcher():
 	ign = 0
 
 	def __init__(self):
-		self.count = 0
+		self.recheck_count = 0
 		debug("init")
 
 	def add(self, file):
 		self.allfiles.append(FileOb(file))
 
-	def check_files(self):
+	def check_files(self, highlight=0):
+		cnt = 0
 		for a in self.allfiles:
 			if a.file.check():
-				a.inactive = False
+				if a.inactive:
+					cnt += 1
+					a.inactive = False
 				if not a.active:
-					self.files.append(a)
+					debug("active", a.name())
 					a.win = None
-					self.redraw = True
 					a.active = True
-				else:
-					self.scr.addstr(a.ty, a.tx, 'ok ')
-					self.scr.chgat(a.ty, a.tx, a.w, self.out.color.pair(self.C_BORDER))
+					a.highlight = highlight
+					self.files.append(a)
+					self.redraw = True
+				self.win_title(a)
 			elif a.active:
-				a.inactive = True
-				self.scr.addstr(a.ty, a.tx, '** ')
-				self.scr.chgat(a.ty, a.tx, a.w, self.out.color.pair(self.C_RED))
+				if not a.inactive:
+					debug("inactive", a.name())
+					cnt += 1
+					a.inactive = True
+				self.win_title(a)
+		return cnt
 
-	def win_title(self, a, marked=False):
-		s = "   " + a.file.name
+	def win_title(self, a):
+		a.animate = True
+		if not a.win: return
+		a.animate = a.highlight != 0
+		p = a.inactive and '** ' or 'ok '
+		s = a.name()
 		w = a.w
-		self.scr.addstr(a.ty, a.tx, s[-w:] + " "*max(0, w-len(s)))
-		att = self.out.color.pair(self.C_BORDER)
-		if marked:
-			att = self.out.color.pair(self.C_RED)
+		self.scr.addstr(a.ty, a.tx, p)
+		self.scr.addstr(a.ty, a.tx+3, s[3-w:])
+		l = len(s)+3
+		if l<w:
+			self.scr.addstr(a.ty, a.tx+l, " "*(w-l))
+#		elif l>w:
+#			a.animate = True
+		att = self.out.color.pair(a.inactive and self.C_RED or self.C_BORDER)
+		if a.highlight & 1:
+			att = self.out.color.reverse(att)
 		self.scr.chgat(a.ty, a.tx, w, att)
+
+		if a.highlight>0:
+			a.highlight -= 1
 
 	def new_win(self, a, last=False):
 		p = int(self.windows / self.tiles)
@@ -427,9 +464,7 @@ class Watcher():
 		a.warn = self.out.color.normal()
 
 		self.win_title(a)
-
-		if a.hist:
-			self.update(a, a.hist)
+		self.update(a, a.hist())
 
 	def scroll(self, a):
 		if self.jump:
@@ -443,21 +478,23 @@ class Watcher():
 			a.jump = False
 
 	def read_files(self):
-		self.count += 1
-		if self.count > self.RECHECK_COUNT:
-			self.count = 0
-			self.check_files()
+		changes = 0
+		self.recheck_count -= 1
+		if self.recheck_count < 0:
+			self.recheck_count = self.RECHECK_COUNT
+			changes = self.check_files(self.RECHECK_COUNT)
 		for a in self.files:
 			data = a.file.read()
-			if not data: continue
 			self.update(a, data)
-			if len(data) >= MAX_HIST:
-				a.hist = data[-MAX_HIST:]
-			else:
-				a.hist = a.hist[max(-len(a.hist), len(data)-MAX_HIST):] + data
+			a.add(data)
+		return changes
 
 	def update(self, a, data):
 		win = a.win
+		if not win: return
+		if a.animate:
+			self.win_title(a)
+		if not data: return
 		win.chgat(a.y, 0, a.warn)
 		win.move(a.y, a.x)
 		y = a.y
@@ -599,8 +636,9 @@ class Watcher():
 		out.showCursor(False)
 		out.timeout(self.WAIT_TENTHS)
 
-		self.layout()
 		self.check_files()
+		self.layout()
+		self.redraw = False
 
 		host = socket.getfqdn()
 		user = getuser()
@@ -668,7 +706,9 @@ class Watcher():
 
 			c = out.getch()
 			if c<0:
-				self.read_files()
+				c = self.read_files()
+				if c:
+					s = str(c) + " file(s) changed status"
 				continue
 
 			c0 = out.charcode(c)
