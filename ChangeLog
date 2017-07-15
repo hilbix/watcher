@@ -1,3 +1,9 @@
+2017-07-15  Valentin Hilbig  <tino@medusa.03.softkill.org>
+
+	* watcher.py (Watcher.make_inactive, Watcher.make_active): added
+	(Watcher.check_files): now uses make_active
+	(Watcher.run): Key I added (inverse of i)
+
 2016-08-08  Valentin Hilbig  <tino@giganto.03.softkill.net>
 
 	* watcher.py (Watcher.add, Watcher.check_files, Watcher.run):

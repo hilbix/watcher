@@ -366,7 +366,6 @@ class Watcher():
 	edit_mode = False
 	edit_win = 0
 	edit_last = 0
-	ign = 0
 
 	def __init__(self):
 		self.recheck_count = 0
@@ -375,27 +374,45 @@ class Watcher():
 	def add(self, file):
 		self.allfiles.append(FileOb(file))
 
-	def check_files(self, highlight=0):
+	def make_inactive(self, f):
+		if not f.active: return False
+		f.active = False
+
+		self.files.remove(f)
+
+		self.redraw = True
+		return True
+
+	def make_active(self, f, highlight=True):
+		if f.active: return False
+		f.active = True
+
+		f.win = None
+		f.highlight = highlight and self.RECHECK_COUNT or 0
+
+		self.files.append(f)
+
+		self.redraw = True
+		return True
+
+	def check_files(self, highlight=False):
 		cnt = 0
 		for a in self.allfiles:
 			if a.file.check():
 				if a.inactive:
-					cnt += 1
 					a.inactive = False
-				if not a.active:
+					cnt += 1
 					debug("active", a.name())
-					a.win = None
-					a.active = True
-					a.highlight = highlight
-					self.files.append(a)
-					self.redraw = True
+				self.make_active(a, highlight)
 				self.win_title(a)
 			elif a.active:
 				if not a.inactive:
-					debug("inactive", a.name())
-					cnt += 1
 					a.inactive = True
+					cnt += 1
+					debug("inactive", a.name())
+				#self.make_inactive(a)
 				self.win_title(a)
+			#else: window is inactive, win_title may fail
 		return cnt
 
 	def win_title(self, a):
@@ -482,7 +499,7 @@ class Watcher():
 		self.recheck_count -= 1
 		if self.recheck_count < 0:
 			self.recheck_count = self.RECHECK_COUNT
-			changes = self.check_files(self.RECHECK_COUNT)
+			changes = self.check_files(True)
 		for a in self.files:
 			data = a.file.read()
 			self.update(a, data)
@@ -767,15 +784,19 @@ class Watcher():
 				s = "Quit"
 				loop = False
 
-			if c == 105:	# i
-				self.ign += 1
+			if c == 73:	# I
 				cnt = 0
-				for f in [a for a in self.files if a.inactive]:
-					f.active = False
-					self.files.remove(f)
-					self.redraw = True
-					cnt += 1
-				s = str(cnt)+" inactive files ignored"
+				for f in self.allfiles:
+					if not f.active and self.make_active(f):
+						cnt += 1
+				s = str(cnt)+" inactive shown"
+
+			if c == 105:	# i
+				cnt = 0
+				for f in self.allfiles:
+					if f.inactive and self.make_inactive(f):
+						cnt += 1
+				s = str(cnt)+" inactive hidden"
 
 			if c == 106:	# j
 				self.jump = True
