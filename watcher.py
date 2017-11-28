@@ -16,6 +16,7 @@ import socket
 import warnings
 import errno
 import curses
+import termios
 
 BUFSIZ = 4096
 MAX_HIST = 102400	# assumed max screen size: 80x24 / 4x3 * 16x10 * 2x2
@@ -132,12 +133,25 @@ class Curses(object):
 		if x+len(text)<w:
 			win.clrtoeol()
 
+	def BREAK(self):
+		return curses.KEY_BREAK
+
 	def isResize(self, c):
 		return c == curses.KEY_RESIZE
+
+	def key_sequence(self, c):
+		if c<256:			return chr(c)
+		if c==curses.KEY_BACKSPACE:	return '\b'
+
+		return None	# not yet implemented
 
 	def saneMode(self):
 		"""Do all the usual curses quirx stuff"""
 		curses.nonl()
+# Does not work.  How can I distinguish CR, LF, Return and Enter with Curses?
+#		t = termios.tcgetattr(1)
+#		t[0] = t[0] | termios.ICRNL
+#		termios.tcsetattr(1, termios.TCSADRAIN, t)
 
 	def showCursor(self, on):
 		"""enable/disable hardware cursor"""
@@ -197,6 +211,10 @@ class WatchPipe():
 		if fd >= 0:
 			nonblocking(fd)
 
+	def sendfd(self):
+#		return self.fd
+		return -1
+
 	def check(self):
 		return self.fd >= 0
 
@@ -224,6 +242,9 @@ class WatchFile():
 		self.sock = None
 		self.pos = 0
 		self.fd = -1
+
+	def sendfd(self):
+		return self.sock and self.fd or -1
 
 	def close(self):
 		if self.fd<0: return
@@ -342,6 +363,11 @@ class FileOb:
 		l = len(data)-self.maxhist
 		self.history = l>=0 and data[-self.maxhist:] or ( self.history[max(-len(self.history), l):] + data )
 
+	def send(self, c):
+		fd = self.file.sendfd()
+		if fd<0:	return False
+		return os.write(fd, c) >= 0
+
 class Watcher():
 
 	# Speed of GUI, do reads each WAIT_TENTHS/10 seconds
@@ -363,9 +389,9 @@ class Watcher():
 	C_WARN=3	# user preference
 	C_RED=4		# computed
 
-	edit_mode = False
+	edit_mode = 0
 	edit_win = 0
-	edit_last = 0
+	edit_last = -1
 
 	def __init__(self):
 		self.recheck_count = 0
@@ -430,7 +456,9 @@ class Watcher():
 #		elif l>w:
 #			a.animate = True
 		att = self.out.color.pair(a.inactive and self.C_RED or self.C_BORDER)
-		if a.highlight & 1:
+		if self.edit_last==a.nr:
+			att = self.out.color.reverse(self.out.color.pair(self.C_RED))
+		elif a.highlight & 1:
 			att = self.out.color.reverse(att)
 		self.scr.chgat(a.ty, a.tx, w, att)
 
@@ -441,6 +469,7 @@ class Watcher():
 		p = int(self.windows / self.tiles)
 		n = self.windows % self.tiles
 
+		a.nr = self.windows
 		self.window[self.windows] = a
 		self.windows += 1
 
@@ -621,22 +650,28 @@ class Watcher():
 		return "(%dx%d)" % (self.height, self.width)
 
 	def edit_off(self):
-		if self.edit_last >= 0:
-			self.win_title(self.window[self.edit_last])
+		n = self.edit_last
 		self.edit_last = -1
+		if n >= 0:
+			self.win_title(self.window[n])
 
 	def edit_on(self):
 		if self.edit_win == self.edit_last:
 			return
 		self.edit_off()
-		self.win_title(self.window[self.edit_win])
 		self.edit_last = self.edit_win
+		self.win_title(self.window[self.edit_win])
 
-	def edit(self):
+	def edit(self, mode=None):
+		if not mode is None:
+			self.edit_mode	= mode
 		if not self.edit_mode:
 			self.edit_off()
 			return
 		self.edit_on()
+
+	def edit_send(self, c):
+		return self.window[self.edit_win].send(c)
 
 	def run(self, out):
 		debug("run")
@@ -671,6 +706,8 @@ class Watcher():
 		c0 = None
 		c1 = None
 		fast = False
+		esc = 0
+		escs = 0
 		while loop:
 			c2 = c1
 			c1 = c0
@@ -683,7 +720,7 @@ class Watcher():
 				ticks = 20
 
 			if ticks == 0:
-				s = cwd
+				s = ("{0}", "Select {1} -- Return to Edit", "Edit {1} -- ESC+Return to leave")[self.edit_mode].format(cwd, self.edit_win)
 				ticks = -1
 
 			now = int(time.time())
@@ -722,12 +759,35 @@ class Watcher():
 			scr.refresh()
 
 			c = out.getch()
+			if c==13: c=10	# how to enable icrnl with curses?
+
+			# special ESC handling
+			if c == 27:
+				esc = esc + 1
+				if esc<5:	# ESC ESC ESC ESC ESC is the same as ESC Return
+					continue
+
+			editing = self.edit_mode == 2
+			escs = 0
+			if esc:
+				escs = esc - 1
+				if c<0:
+					c = 27
+				elif c==27 or c==13:
+					c = out.BREAK()
+				else:
+					editing = False
+				# more specials?
+				esc = 0
+
+			# no key received
 			if c<0:
 				c = self.read_files()
 				if c:
 					s = str(c) + " file(s) changed status"
 				continue
 
+			# if you type something irregular, type to fast processing
 			c0 = out.charcode(c)
 			if fast and (c1 or c2):
 				c0 = (c1 or c2)+c0
@@ -738,15 +798,37 @@ class Watcher():
 
 			fast = False
 
+			# Sequences, which need to be processed by Watcher
 			if out.isResize(c):
 				s = "Resized " + self.layout()
+				continue
 
-			if False and c == 9:
-				self.edit_mode = not self.edit_mode
-				self.edit()
-				s = "Edit mode"
-				if not self.edit_mode:
-					s = s + " off"
+			if c == out.BREAK():
+				self.edit(0)
+				s = "Edit mode off"
+				continue
+
+			# Window edit mode
+			if editing:	# editing, send to window
+				c = out.key_sequence(c)
+				if c is None:
+					s = "unknown key to send"
+				elif	self.edit_send(('\e'*escs) + c):
+					s = escs and "sent with %d ESC" % (escs) or "sent"
+				else:
+					s = "failed to send"
+				continue
+
+			# Window select mode
+			if c == 9:		# Return selects current window
+				self.edit(2)
+				s = "Edit mode " + str(self.edit_win)
+				continue
+
+			if c == 10:
+				self.edit(self.edit_mode and 2 or 1)
+				ticks = 0
+				continue
 
 			if c == 12:	# ^L
 				self.redraw	= True
