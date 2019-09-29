@@ -139,11 +139,18 @@ class Curses(object):
 	def isResize(self, c):
 		return c == curses.KEY_RESIZE
 
-	def key_sequence(self, c):
-		if c<256:			return chr(c)
-		if c==curses.KEY_BACKSPACE:	return '\b'
-
-		return None	# not yet implemented
+	# This is based on TERM=dumb for now
+	def key_sequence(self, c, esc=0):
+		o=[esc]
+		def E(a,b):
+			if o[0]:
+				o[0]	-= 1
+				return b
+			return a
+		if c>=256:
+			if c==curses.KEY_BACKSPACE:	c = E(127,8)
+			else:	return None	# not yet implemented
+		return ("\e"*o[0])+chr(c)
 
 	def saneMode(self):
 		"""Do all the usual curses quirx stuff"""
@@ -456,7 +463,7 @@ class Watcher():
 #		elif l>w:
 #			a.animate = True
 		att = self.out.color.pair(a.inactive and self.C_RED or self.C_BORDER)
-		if self.edit_last==a.nr:
+		if self.edit_last==a.nr and self.edit_mode:
 			att = self.out.color.reverse(self.out.color.pair(self.C_RED))
 		elif a.highlight & 1:
 			att = self.out.color.reverse(att)
@@ -654,6 +661,7 @@ class Watcher():
 		self.edit_last = -1
 		if n >= 0:
 			self.win_title(self.window[n])
+		return "Edit mode off"
 
 	def edit_on(self):
 		if self.edit_win == self.edit_last:
@@ -666,12 +674,33 @@ class Watcher():
 		if not mode is None:
 			self.edit_mode	= mode
 		if not self.edit_mode:
-			self.edit_off()
-			return
+			return self.edit_off()
 		self.edit_on()
+		return ("Edit mode " if self.edit_mode==2 else "Select mode ")+str(self.edit_win)
 
 	def edit_send(self, c):
 		return self.window[self.edit_win].send(c)
+
+	def edit_move(self, c):
+		if c == curses.KEY_LEFT:	d = -1
+		elif c == curses.KEY_RIGHT:	d = 1
+		elif c == curses.KEY_UP:	d = -self.columns
+		elif c == curses.KEY_DOWN:	d = self.columns
+		else:
+			return None
+
+		if not self.edit_mode:
+			return "Please press Return first to enter selection mode"
+
+		self.edit_win	+= d
+		if self.edit_win<0:
+			self.edit_win	= self.windows-1 - (self.windows-self.edit_win-1) % self.columns
+		elif self.edit_win>=self.windows:
+			self.edit_win	= self.edit_win % self.columns
+		if self.edit_win<0 or self.edit_win>=self.windows:
+			self.edit_win	= 0
+		self.edit_on()
+		return "moved to {}".format(self.edit_win)
 
 	def run(self, out):
 		debug("run")
@@ -708,6 +737,7 @@ class Watcher():
 		fast = False
 		esc = 0
 		escs = 0
+		enter = 10
 		while loop:
 			c2 = c1
 			c1 = c0
@@ -759,7 +789,7 @@ class Watcher():
 			scr.refresh()
 
 			c = out.getch()
-			if c==13: c=10	# how to enable icrnl with curses?
+#			if c==13: c=10	# CRAP!  How to enable icrnl with curses?
 
 			# special ESC handling
 			if c == 27:
@@ -772,12 +802,12 @@ class Watcher():
 			if esc:
 				escs = esc - 1
 				if c<0:
-					c = 27
-				elif c==27 or c==13:
+					c = 27	# send ESC
+				elif c==27 or c==10 or c==13:
 					c = out.BREAK()
-				else:
-					editing = False
 				# more specials?
+				else:
+					escs = esc
 				esc = 0
 
 			# no key received
@@ -804,30 +834,37 @@ class Watcher():
 				continue
 
 			if c == out.BREAK():
-				self.edit(0)
-				s = "Edit mode off"
+				s	= self.edit(0)
 				continue
 
 			# Window edit mode
 			if editing:	# editing, send to window
-				c = out.key_sequence(c)
+				if c==enter:	c=10
+				elif c==10:	c=enter
+				c = out.key_sequence(c, escs)
 				if c is None:
 					s = "unknown key to send"
-				elif	self.edit_send(('\e'*escs) + c):
+				elif self.edit_send(c):
 					s = escs and "sent with %d ESC" % (escs) or "sent"
 				else:
 					s = "failed to send"
 				continue
 
-			# Window select mode
-			if c == 9:		# Return selects current window
-				self.edit(2)
-				s = "Edit mode " + str(self.edit_win)
-				continue
+			s	= self.edit_move(c)
+			if s:	continue
 
-			if c == 10:
-				self.edit(self.edit_mode and 2 or 1)
-				ticks = 0
+			# Window select mode
+#			if c == 9:		# Return selects current window
+#				if not self.edit_mode:
+#					s = "Please press Enter to select window"
+#					continue
+#				s	= self.edit(2)
+#				continue
+
+			if c == 10 or c==13:	# CRAP icrnl
+				enter	= c
+				s	= self.edit(self.edit_mode and 2 or 1)
+#				ticks = 0
 				continue
 
 			if c == 12:	# ^L
