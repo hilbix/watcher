@@ -694,9 +694,9 @@ class Watcher():
 
 		self.edit_win	+= d
 		if self.edit_win<0:
-			self.edit_win	= self.windows-1 - (self.windows-self.edit_win-1) % self.columns
+			self.edit_win	= self.windows-1 - (self.windows-self.edit_win-1) % abs(d)
 		elif self.edit_win>=self.windows:
-			self.edit_win	= self.edit_win % self.columns
+			self.edit_win	= self.edit_win % abs(d)
 		if self.edit_win<0 or self.edit_win>=self.windows:
 			self.edit_win	= 0
 		self.edit_on()
