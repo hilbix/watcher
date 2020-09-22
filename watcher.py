@@ -167,9 +167,25 @@ class Curses(object):
 		except Exception:
 			pass
 
+	def nodelay(self, nodelay=True):
+		'''disable/enable waiting'''
+		if nodelay or not self._timeout:
+			curses.cbreak()
+			self.scr.nodelay(1 if nodelay else 0)
+		elif 0 < self._timeout < 255:
+			curses.halfdelay(self._timeout)
+		else:
+			curses.cbreak()
+
 	def timeout(self, tenth):
-		"""set timeout for getch()"""
-		curses.halfdelay(tenth)
+		'''
+		set timeout for getch() when nodelay(False)
+		0:	permanently enable .nodelay()
+		1..255:	.getch() timeout in tenth of seconds
+		else:	cbreak mode
+		'''
+		self._timeout = tenth
+		self.nodelay(False)
 
 	def charcode(self, c):
 		s = ""
@@ -548,6 +564,7 @@ class Watcher():
 		if a.animate:
 			self.win_title(a)
 		if not data: return
+		self.out.nodelay()	# faster update
 		win.chgat(a.y, 0, a.warn)
 		win.move(a.y, a.x)
 		y = a.y
@@ -812,6 +829,7 @@ class Watcher():
 
 			# no key received
 			if c<0:
+				out.nodelay(False)
 				c = self.read_files()
 				if c:
 					s = str(c) + " file(s) changed status"
