@@ -1,11 +1,9 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 #
 # ./watcher.py -|file|sock...
 #
 # This Works is placed under the terms of the Copyright Less License,
 # see file COPYRIGHT.CLL.  USE AT OWN RISK, ABSOLUTELY NO WARRANTY.
-
-from __future__ import print_function
 
 import sys
 import os
@@ -192,7 +190,7 @@ class Curses(object):
 		if c == 27: s = "ESC"
 		if c == 32: s = "SPC"
 		if c > 32 and c < 127: s = "%c" % c
-		for k,v in curses.__dict__.iteritems():
+		for k,v in curses.__dict__.items():
 			if k.startswith("KEY_") and v == c:
 				s = k[4:]
 				break
@@ -335,10 +333,11 @@ class WatchFile():
 					d = self.sock.recv(BUFSIZ)
 					if not d:	eof = True
 					data.append(d)
-			except socket.error as (e, s):
+			except socket.error as xxx_todo_changeme:
+				(e, s) = xxx_todo_changeme.args
 				if e != errno.EAGAIN:
 					raise
-			data = ''.join(data)
+			data = b''.join(data)
 			if not data:
 				if eof:	self.close()
 				return None
@@ -369,7 +368,7 @@ class WatchFile():
 class FileOb:
 	def __init__(self, file):
 		self.file = file
-		self.history = ""
+		self.history = b''
 		self.active = False
 		self.inactive = False
 		self.maxhist = MAX_HIST
@@ -569,7 +568,7 @@ class Watcher():
 		win.move(a.y, a.x)
 		y = a.y
 		for c in data:
-			c = ord(c)
+#			c = ord(c)
 			if c == 13:
 				win.move(win.getyx()[0], 0)
 				continue
