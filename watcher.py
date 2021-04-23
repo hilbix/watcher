@@ -388,7 +388,10 @@ class FileOb:
 	def send(self, c):
 		fd = self.file.sendfd()
 		if fd<0:	return False
-		return os.write(fd, c) >= 0
+		try:
+			return os.write(fd, c) >= 0
+		except OSError:
+			return False
 
 class Watcher():
 
