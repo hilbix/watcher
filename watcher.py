@@ -148,7 +148,7 @@ class Curses(object):
 		if c>=256:
 			if c==curses.KEY_BACKSPACE:	c = E(127,8)
 			else:	return None	# not yet implemented
-		return ("\e"*o[0])+chr(c)
+		return bytes([27]*o[0]+[c])
 
 	def saneMode(self):
 		"""Do all the usual curses quirx stuff"""
