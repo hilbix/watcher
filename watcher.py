@@ -394,6 +394,24 @@ class FileOb:
 			return False
 
 class Watcher():
+	ESCTABLE = {
+	  8:	127,	# BS	^?	DEL
+	  10:	'BREAK',#
+	  13:	'BREAK',#
+	  27:	'BREAK',#
+	  32:	0,	# SPC	^@	NUL
+	  47:	127,	# /	^?	DEL
+	  45:	31,	# -	^_	US
+	  50:	0,	# 2	^@	NUL
+	  51:	27,	# 3	^[	ESC
+	  52:	28,	# 4	^\	FS
+	  53:	29,	# 5	^]	GS
+	  54:	30,	# 6	^^	RS
+	  55:	31,	# 7	^_	US
+	  56:	127,	# 8	^?	DEL
+	  63:	127,	# ?	^?	DEL
+	 127:   8	# DEL  ^H	BS
+	}
 
 	# Speed of GUI, do reads each WAIT_TENTHS/10 seconds
 	WAIT_TENTHS = 3
@@ -769,7 +787,7 @@ class Watcher():
 				ticks = 20
 
 			if ticks == 0:
-				s = ("{0}", "Select {1} -- Return to Edit", "Edit {1} -- ESC+Return to leave")[self.edit_mode].format(cwd, self.edit_win)
+				s = ("{0}", "Select {1} -- Return to Edit", "Edit {1} -- ESC+ESC+Return to leave")[self.edit_mode].format(cwd, self.edit_win)
 				ticks = -1
 
 			now = int(time.time())
@@ -819,12 +837,20 @@ class Watcher():
 			editing = self.edit_mode == 2
 			escs = 0
 			if esc:
-				escs = esc - 1
 				if c<0:
+					escs = esc - 1
 					c = 27	# send ESC
-				elif c==27 or c==10 or c==13:
-					c = out.BREAK()
-				# more specials?
+				elif esc>=2:
+					escs = esc - 2
+					if c in self.ESCTABLE:
+						c	= self.ESCTABLE[c]
+						if isinstance(c, str):
+							c = getattr(out, c)()
+					elif 64<= c <  127:
+						c = c & 0x1f
+					# more specials?
+					else:
+						escs = esc
 				else:
 					escs = esc
 				esc = 0
